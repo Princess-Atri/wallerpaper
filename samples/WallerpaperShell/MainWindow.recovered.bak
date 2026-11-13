@@ -1,0 +1,1038 @@
+using Microsoft.UI.Windowing;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System.Diagnostics;
+using Wallerpaper.Diagnostics;
+using Wallerpaper.Shell.Models;
+using Wallerpaper.Shell.Services;
+using Wallerpaper.Shell.Views;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Graphics;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
+
+namespace Wallerpaper.Shell;
+
+public sealed partial class MainWindow : Window
+{
+	private readonly ShellConfig _config;
+
+	private readonly WallpaperCatalog _catalog;
+
+	private readonly HostBridge _host;
+
+	private readonly LocalVideoSearch _localVideos;
+
+	private ThumbnailService _thumbnails;
+
+	private TrayIcon? _tray;
+
+	private WallpaperKind _kind;
+
+	private WallpaperItem? _selected;
+
+	private List<WallpaperItem> _visible = new List<WallpaperItem>();
+
+	private List<MonitorDisplay> _monitors = new List<MonitorDisplay>();
+
+	private bool _paused;
+
+	private bool _exitRequested;
+
+	private int _refreshToken;
+    private DataTemplate? _defaultGridTemplate;
+    private ItemsPanelTemplate? _defaultGridPanel;
+
+
+	public MainWindow(bool startMinimized = false)
+	{
+		InitializeComponent();
+		_defaultGridTemplate = WallpaperGrid.ItemTemplate;
+		_defaultGridPanel = (ItemsPanelTemplate)Root.Resources["DefaultGridPanel"];
+		WallpaperGrid.ItemsPanel = _defaultGridPanel;
+		_config = ConfigStore.Load();
+		_catalog = new WallpaperCatalog(_config);
+		_localVideos = new LocalVideoSearch(_config);
+		_thumbnails = new ThumbnailService(_config);
+		_host = new HostBridge(_config, _catalog);
+		_host.Log += OnHostLog;
+		AppWindow.Resize(new SizeInt32(1360, 860));
+		string text = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+		if (File.Exists(text))
+		{
+			AppWindow.SetIcon(text);
+		}
+		SettingsViewControl.Configure(_config, _catalog, _thumbnails);
+		SettingsViewControl.Saved += Settings_Saved;
+		_monitors = MonitorService.Enumerate();
+		TargetMonitorCombo.Items.Clear();
+		foreach (MonitorDisplay monitor in _monitors)
+		{
+			TargetMonitorCombo.Items.Add(monitor.Label);
+		}
+		if (_monitors.Count > 0)
+		{
+			TargetMonitorCombo.SelectedIndex = 0;
+		}
+		_tray = TryCreateTray();
+		AppWindow.Closing += OnClosing;
+		Closed += OnClosed;
+		Nav.SelectedItem = Nav.MenuItems[0];
+		RefreshCatalogAsync();
+		if (startMinimized || _config.General.StartMinimized)
+		{
+			DispatcherQueue.TryEnqueue(HideToTray);
+			return;
+		}
+		DispatcherQueue.TryEnqueue(() =>
+		{
+			if (_config.Host.AutoStartHost && _catalog.Items.Count > 0)
+			{
+				_host.Start();
+			}
+		});
+	}
+
+	private TrayIcon? TryCreateTray()
+	{
+		try
+		{
+			TrayIcon trayIcon = new TrayIcon(() => _catalog.Items.OrderBy((WallpaperItem x) => x.Title).ToList(), () => _paused, ShowFromTray, TogglePause, ShowSettings, ExitApp, SelectTrayWallpaper);
+			trayIcon.SetPaused(_paused);
+			return trayIcon;
+		}
+		catch (Exception ex)
+		{
+			SetStatus("托盘初始化失败：" + ex.Message);
+			return null;
+		}
+	}
+
+	private async Task RefreshCatalogAsync()
+	{
+		int token = ++_refreshToken;
+		int count = _catalog.Refresh();
+		try
+		{
+			_config.Wallpapers = _catalog.Items.ToList();
+			ConfigStore.Save(_config);
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("catalog save failed", ex);
+			SetStatus("保存壁纸目录失败：" + ex.Message);
+		}
+		ApplyFilter();
+		foreach (WallpaperItem item in _visible.ToList())
+		{
+			string text = await _thumbnails.GetAsync(item);
+			if (token == _refreshToken && text != null)
+			{
+				try
+				{
+					item.Thumbnail = new BitmapImage(new Uri(text));
+				}
+				catch
+				{
+				}
+			}
+		}
+		SettingsViewControl.Configure(_config, _catalog, _thumbnails);
+		SetStatus($"已载入 {count} 个壁纸");
+		if (_config.Host.AutoStartHost && _catalog.Items.Count > 0 && !_host.IsRunning)
+		{
+			_host.Start();
+		}
+	}
+
+	private void ApplyFilter()
+	{
+		string query = SearchBox.Text?.Trim() ?? "";
+		_visible = (from x in _catalog.ByKind(_kind)
+			where string.IsNullOrWhiteSpace(query) || x.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || x.Path.Contains(query, StringComparison.OrdinalIgnoreCase)
+			select x).ToList();
+		WallpaperGrid.ItemsSource = _visible;
+		EmptyState.Visibility = ((_visible.Count != 0) ? Visibility.Collapsed : Visibility.Visible);
+		if (_kind == WallpaperKind.Scene)
+		{
+			WallpaperGrid.ItemTemplate = (DataTemplate)Root.Resources["SceneCardTemplate"];
+			WallpaperGrid.ItemsPanel = (ItemsPanelTemplate)Root.Resources["SceneGridPanel"];
+		}
+		else
+		{
+			if (_defaultGridTemplate is not null)
+				WallpaperGrid.ItemTemplate = _defaultGridTemplate;
+			if (_defaultGridPanel is not null)
+				WallpaperGrid.ItemsPanel = _defaultGridPanel;
+		}
+		TextBlock categoryTitle = CategoryTitle;
+		categoryTitle.Text = _kind switch
+		{
+			WallpaperKind.Video => "视频壁纸",
+			WallpaperKind.Web => "Web 壁纸",
+			WallpaperKind.Sequence => "组合壁纸",
+			_ => "场景壁纸",
+		};
+		CategorySubtitle.Text = _kind == WallpaperKind.Sequence
+			? $"{_visible.Count} 个 · 第一个播完一遍后循环第二个"
+			: $"{_visible.Count} 个 · 文件或文件夹都可以直接加入";
+		if (_selected != null && !_visible.Contains(_selected))
+		{
+			ClearSelection();
+		}
+	}
+
+	private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+	{
+		if (args.SelectedItemContainer is NavigationViewItem { Tag: string tag })
+		{
+			if (tag == "Settings")
+			{
+				LibraryContent.Visibility = Visibility.Collapsed;
+				SettingsViewControl.Visibility = Visibility.Visible;
+				SettingsViewControl.Configure(_config, _catalog, _thumbnails);
+				return;
+			}
+			LibraryContent.Visibility = Visibility.Visible;
+			SettingsViewControl.Visibility = Visibility.Collapsed;
+			WallpaperKind kind = tag switch
+			{
+				"Web" => WallpaperKind.Web,
+				"Scene" => WallpaperKind.Scene,
+				"Sequence" => WallpaperKind.Sequence,
+				_ => WallpaperKind.Video
+			};
+			_kind = kind;
+			ApplyFilter();
+			LoadVisibleThumbnailsAsync();
+		}
+	}
+
+	private async Task LoadVisibleThumbnailsAsync()
+	{
+		int token = _refreshToken;
+		foreach (WallpaperItem item in _visible.ToList())
+		{
+			string text = await _thumbnails.GetAsync(item);
+			if (token == _refreshToken && text != null)
+			{
+				try
+				{
+					item.Thumbnail = new BitmapImage(new Uri(text));
+				}
+				catch
+				{
+				}
+			}
+		}
+	}
+
+	private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+	{
+		if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput)
+		{
+			ApplyFilter();
+		}
+	}
+
+	private async void SearchBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+	{
+		string text = args.QueryText?.Trim() ?? "";
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			ApplyFilter();
+		}
+		else
+		{
+			await ShowLocalVideoSearchAsync(text);
+		}
+	}
+
+	private async Task ShowLocalVideoSearchAsync(string query)
+	{
+		SetStatus("正在搜索本机视频：" + query + " …");
+		IReadOnlyList<LocalVideoResult> results;
+		try
+		{
+			results = await _localVideos.SearchAsync(query);
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("local video search failed", ex);
+			SetStatus("搜索失败：" + ex.Message);
+			return;
+		}
+		if (results.Count == 0)
+		{
+			await new ContentDialog
+			{
+				Title = "没有找到视频",
+				Content = "本机没有找到文件名包含“" + query + "”的视频。\n可以尝试添加文件夹，或把视频放到“视频\\Wallerpaper”目录。",
+				CloseButtonText = "知道了",
+				XamlRoot = Content.XamlRoot
+			}.ShowAsync();
+			SetStatus("未找到匹配视频");
+			return;
+		}
+		ListView list = new ListView
+		{
+			ItemsSource = results,
+			DisplayMemberPath = "Display",
+			SelectionMode = ListViewSelectionMode.Single,
+			Height = 360.0,
+			Margin = new Thickness(0.0, 8.0, 0.0, 0.0)
+		};
+		ContentDialog dialog = new ContentDialog
+		{
+			Title = $"找到 {results.Count} 个视频",
+			Content = new StackPanel
+			{
+				Children = 
+				{
+					(UIElement)new TextBlock
+					{
+						Text = "双击结果，或选中后点“添加壁纸”。",
+						TextWrapping = TextWrapping.Wrap,
+						Opacity = 0.75
+					},
+					(UIElement)list
+				}
+			},
+			PrimaryButtonText = "添加壁纸",
+			CloseButtonText = "取消",
+			DefaultButton = ContentDialogButton.Primary,
+			XamlRoot = Content.XamlRoot
+		};
+		list.DoubleTapped += async (object _, DoubleTappedRoutedEventArgs _) =>
+		{
+			await AddSelectedAsync();
+			dialog.Hide();
+		};
+		dialog.PrimaryButtonClick += async (ContentDialog _, ContentDialogButtonClickEventArgs args) =>
+		{
+			if (!(list.SelectedItem is LocalVideoResult))
+			{
+				args.Cancel = true;
+				SetStatus("请先选择一个视频");
+			}
+			else
+			{
+				args.Cancel = true;
+				await AddSelectedAsync();
+				dialog.Hide();
+			}
+		};
+		await dialog.ShowAsync();
+		SetStatus($"搜索“{query}”完成，共 {results.Count} 个结果");
+		async Task AddSelectedAsync()
+		{
+			if (list.SelectedItem is LocalVideoResult localVideoResult)
+			{
+				await AddVideoFileAsync(localVideoResult.Path);
+			}
+		}
+	}
+
+	private async void AddFolder_Click(object sender, RoutedEventArgs e)
+	{
+		_ = 1;
+		try
+		{
+			FolderPicker folderPicker = new FolderPicker
+			{
+				FileTypeFilter = { "*" }
+			};
+			InitializeWithWindow.Initialize(folderPicker, WindowNative.GetWindowHandle(this));
+			StorageFolder storageFolder = await folderPicker.PickSingleFolderAsync();
+			if ((object)storageFolder != null)
+			{
+				AddLibraryRoot(storageFolder.Path, WallpaperKind.Video, recursive: true);
+				_kind = WallpaperKind.Video;
+				SelectCategory("Video");
+				ConfigStore.Save(_config);
+				await RefreshCatalogAsync();
+				ApplyFilter();
+				SetStatus($"已添加文件夹，载入 {_catalog.ByKind(WallpaperKind.Video).Count} 个视频");
+			}
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("add folder failed", ex);
+			SetStatus("添加文件夹失败：" + ex.Message);
+		}
+	}
+
+	private async void AddFile_Click(object sender, RoutedEventArgs e)
+	{
+		_ = 1;
+		try
+		{
+			FileOpenPicker fileOpenPicker = new FileOpenPicker();
+			string[] array = new string[13]
+			{
+				".mp4", ".webm", ".mkv", ".mov", ".avi", ".wmv", ".m4v", ".flv", ".ts", ".m2ts",
+				".html", ".htm", ".json"
+			};
+			foreach (string item in array)
+			{
+				fileOpenPicker.FileTypeFilter.Add(item);
+			}
+			InitializeWithWindow.Initialize(fileOpenPicker, WindowNative.GetWindowHandle(this));
+			IReadOnlyList<StorageFile> files = await fileOpenPicker.PickMultipleFilesAsync();
+			if (files == null || files.Count == 0)
+			{
+				return;
+			}
+			WallpaperKind? firstKind = null;
+			foreach (StorageFile item2 in files)
+			{
+				WallpaperKind wallpaperKind;
+				switch (Path.GetExtension(item2.Path).ToLowerInvariant())
+				{
+				case ".html":
+				case ".htm":
+					wallpaperKind = WallpaperKind.Web;
+					break;
+				case ".json":
+					wallpaperKind = WallpaperKind.Scene;
+					break;
+				default:
+					wallpaperKind = WallpaperKind.Video;
+					break;
+				}
+				WallpaperKind wallpaperKind2 = wallpaperKind;
+				firstKind.GetValueOrDefault();
+				if (!firstKind.HasValue)
+				{
+					wallpaperKind = wallpaperKind2;
+					firstKind = wallpaperKind;
+				}
+				AddLibraryRoot(item2.Path, wallpaperKind2, recursive: false);
+			}
+			ConfigStore.Save(_config);
+			await RefreshCatalogAsync();
+			if (firstKind.HasValue)
+			{
+				WallpaperKind wallpaperKind3 = (_kind = firstKind.GetValueOrDefault());
+				SelectCategory(wallpaperKind3.ToString());
+			}
+			ApplyFilter();
+			SetStatus($"已添加 {files.Count} 个壁纸文件");
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("add file failed", ex);
+			SetStatus("添加文件失败：" + ex.Message);
+		}
+	}
+
+	private async void AddSequence_Click(object sender, RoutedEventArgs e)
+	{
+		try
+		{
+			StorageFile first = await PickVideoAsync("选择第一个视频（播放一遍）");
+			if (first is null) return;
+			StorageFile second = await PickVideoAsync("选择第二个视频（之后一直循环）");
+			if (second is null) return;
+
+			WallpaperItem item = _catalog.AddSequence(first.Path, second.Path);
+			ConfigStore.Save(_config);
+			await RefreshCatalogAsync();
+			_kind = WallpaperKind.Sequence;
+			SelectCategory("Sequence");
+			ApplyFilter();
+			WallpaperGrid.SelectedItem = item;
+			SetStatus("已添加组合：" + item.Title);
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("add sequence failed", ex);
+			SetStatus("添加组合失败：" + ex.Message);
+		}
+	}
+
+	private async Task<StorageFile?> PickVideoAsync(string title)
+	{
+		FileOpenPicker picker = new FileOpenPicker();
+		foreach (string ext in new[] { ".mp4", ".webm", ".mkv", ".mov", ".avi", ".wmv",
+		                              ".m4v", ".flv", ".ts", ".m2ts" })
+			picker.FileTypeFilter.Add(ext);
+		InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+		StorageFile file = await picker.PickSingleFileAsync();
+		if (file is null)
+			SetStatus(title + "：已取消");
+		return file;
+	}
+
+	private bool AddLibraryRoot(string path, WallpaperKind kind, bool recursive)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+		{
+			return false;
+		}
+		string full = Path.GetFullPath(path);
+		if (Directory.Exists(full))
+		{
+			string prefix = full.TrimEnd('\\') + "\\";
+			_config.ExcludedPaths.RemoveAll((string x) => x.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || string.Equals(x, full, StringComparison.OrdinalIgnoreCase));
+		}
+		else
+		{
+			_config.ExcludedPaths.RemoveAll((string x) => string.Equals(x, full, StringComparison.OrdinalIgnoreCase));
+		}
+		if (_config.Library.Any((LibraryRoot x) => string.Equals(Path.GetFullPath(x.Path), full, StringComparison.OrdinalIgnoreCase) && x.Kind == kind))
+		{
+			return false;
+		}
+		_config.Library.Add(new LibraryRoot
+		{
+			Path = full,
+			Kind = kind,
+			Recursive = recursive
+		});
+		return true;
+	}
+
+	private void SelectCategory(string tag)
+	{
+		NavigationViewItem navigationViewItem = Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault((NavigationViewItem x) => string.Equals(x.Tag as string, tag, StringComparison.OrdinalIgnoreCase));
+		if ((object)navigationViewItem != null)
+		{
+			Nav.SelectedItem = navigationViewItem;
+		}
+	}
+
+	private async Task AddVideoFileAsync(string path)
+	{
+		if (!File.Exists(path))
+		{
+			SetStatus("视频不存在：" + path);
+			return;
+		}
+		AddLibraryRoot(path, WallpaperKind.Video, recursive: false);
+		ConfigStore.Save(_config);
+		_kind = WallpaperKind.Video;
+		SelectCategory("Video");
+		await RefreshCatalogAsync();
+		ApplyFilter();
+		WallpaperItem wallpaperItem = _catalog.Items.FirstOrDefault((WallpaperItem x) => string.Equals(x.Path, path, StringComparison.OrdinalIgnoreCase));
+		if (wallpaperItem != null)
+		{
+			WallpaperGrid.SelectedItem = wallpaperItem;
+			SetStatus("已添加壁纸：" + wallpaperItem.Title);
+		}
+		else
+		{
+			SetStatus("已加入库，但目录扫描未返回：" + path);
+		}
+	}
+
+	private void WallpaperGrid_DragOver(object sender, DragEventArgs e)
+	{
+		if (e.DataView.Contains(StandardDataFormats.StorageItems))
+		{
+			e.AcceptedOperation = DataPackageOperation.Copy;
+			e.DragUIOverride.Caption = $"添加到{_kind}分类";
+			e.DragUIOverride.IsCaptionVisible = true;
+		}
+	}
+
+	private async void WallpaperGrid_Drop(object sender, DragEventArgs e)
+	{
+		if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+		{
+			return;
+		}
+		IReadOnlyList<IStorageItem> readOnlyList = await e.DataView.GetStorageItemsAsync();
+		int added = 0;
+		foreach (IStorageItem item in readOnlyList)
+		{
+			if (item is StorageFolder storageFolder)
+			{
+				if (AddLibraryRoot(storageFolder.Path, WallpaperKind.Video, recursive: true))
+				{
+					added++;
+					_kind = WallpaperKind.Video;
+					SelectCategory("Video");
+				}
+			}
+			else if (item is StorageFile storageFile)
+			{
+				WallpaperKind wallpaperKind;
+				switch (Path.GetExtension(storageFile.Path).ToLowerInvariant())
+				{
+				case ".html":
+				case ".htm":
+					wallpaperKind = WallpaperKind.Web;
+					break;
+				case ".json":
+					wallpaperKind = WallpaperKind.Scene;
+					break;
+				default:
+					wallpaperKind = WallpaperKind.Video;
+					break;
+				}
+				WallpaperKind kind = wallpaperKind;
+				if (AddLibraryRoot(storageFile.Path, kind, recursive: false))
+				{
+					added++;
+				}
+			}
+		}
+		if (added != 0)
+		{
+			ConfigStore.Save(_config);
+			await RefreshCatalogAsync();
+			SetStatus($"已拖入 {added} 个壁纸来源");
+		}
+	}
+
+	private async void Refresh_Click(object sender, RoutedEventArgs e)
+	{
+		await RefreshCatalogAsync();
+	}
+
+	private async void RebuildThumb_Click(object sender, RoutedEventArgs e)
+	{
+		_thumbnails.Clear();
+		await RefreshCatalogAsync();
+		SetStatus("缩略图已重新生成");
+	}
+
+	private void WallpaperGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+	{
+		if (WallpaperGrid.SelectedItem is WallpaperItem wallpaperItem)
+		{
+			_selected = wallpaperItem;
+			ApplyButton.IsEnabled = true;
+			PreviewButton.IsEnabled = true;
+			ApplyToMonitorButton.IsEnabled = true;
+			ShowProperties(wallpaperItem);
+			SettingsViewControl.SetPreview(wallpaperItem);
+		}
+		else
+		{
+			ClearSelection();
+		}
+	}
+
+	private async void WallpaperGrid_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+	{
+		if (WallpaperGrid.SelectedItem is WallpaperItem item)
+			await RenameWallpaperAsync(item);
+	}
+
+	private void WallpaperGrid_ItemClick(object sender, ItemClickEventArgs e)
+	{
+		if (e.ClickedItem is WallpaperItem selectedItem)
+		{
+			WallpaperGrid.SelectedItem = selectedItem;
+			ApplySelectedToTarget();
+		}
+	}
+
+	private void ShowProperties(WallpaperItem item)
+	{
+		PropertyTitle.Text = item.Kind == WallpaperKind.Sequence
+			? item.Title + "\n" + item.Path + "\n↓\n" + item.SecondPath
+			: item.Title + "\n" + item.Path;
+		RenameButton.IsEnabled = true;
+		DeleteButton.IsEnabled = true;
+		VolumeSlider.Value = item.Volume;
+		SpeedSlider.Value = item.Speed;
+		ShaderSlider.Value = (item.ShaderParameters.TryGetValue("intensity", out var value) ? value : 1.0);
+		VolumeSlider.IsEnabled = item.Kind != WallpaperKind.Scene;
+		MuteToggle.IsEnabled = item.Kind != WallpaperKind.Scene;
+		ShaderSlider.IsEnabled = item.Kind == WallpaperKind.Scene;
+		VolumeValue.Text = $"{item.Volume:F0}";
+		SpeedValue.Text = $"{item.Speed:F1}×";
+		ShaderValue.Text = $"{ShaderSlider.Value:F2}";
+		MuteToggle.IsOn = item.Muted;
+		if (_monitors.Count > 0)
+		{
+			string target = _config.Monitors.FirstOrDefault((KeyValuePair<string, MonitorAssignment> x) => x.Value.WallpaperId == item.Id).Key;
+			int num = _monitors.FindIndex((MonitorDisplay x) => x.Device == target);
+			TargetMonitorCombo.SelectedIndex = ((num >= 0) ? num : 0);
+		}
+	}
+
+	private void ClearSelection()
+	{
+		_selected = null;
+		PropertyTitle.Text = "未选择壁纸";
+		ApplyButton.IsEnabled = false;
+		PreviewButton.IsEnabled = false;
+		ApplyToMonitorButton.IsEnabled = false;
+		RenameButton.IsEnabled = false;
+		DeleteButton.IsEnabled = false;
+	}
+
+	private async void Rename_Click(object sender, RoutedEventArgs e)
+	{
+		if (_selected is not WallpaperItem item)
+			return;
+		await RenameWallpaperAsync(item);
+	}
+
+	private async Task RenameWallpaperAsync(WallpaperItem item)
+	{
+		TextBox box = new TextBox
+		{
+			Text = item.Title,
+			PlaceholderText = "输入新的壁纸名称",
+			SelectionStart = item.Title.Length
+		};
+		if (await new ContentDialog
+		{
+			Title = "重命名壁纸",
+			Content = box,
+			PrimaryButtonText = "保存",
+			CloseButtonText = "取消",
+			DefaultButton = ContentDialogButton.Primary,
+			XamlRoot = Content.XamlRoot
+		}.ShowAsync() != ContentDialogResult.Primary)
+		{
+			return;
+		}
+		string text = box.Text.Trim();
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			SetStatus("名称不能为空");
+			return;
+		}
+		if (text.Length > 120)
+		{
+			text = text.Substring(0, 120);
+		}
+		item.Title = text;
+		try
+		{
+			ConfigStore.Save(_config);
+			ApplyFilter();
+			ShowProperties(item);
+			WallpaperGrid.SelectedItem = item;
+			SetStatus("已重命名为“" + text + "”");
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("rename wallpaper failed", ex);
+			SetStatus("重命名失败：" + ex.Message);
+		}
+	}
+
+	private async void Delete_Click(object sender, RoutedEventArgs e)
+	{
+		WallpaperItem item = _selected;
+		if (item == null || await new ContentDialog
+		{
+			Title = "从库中删除壁纸",
+			Content = "“" + item.Title + "”将从 Wallerpaper 库中移除，但不会删除磁盘上的源文件。\n\n" + item.Path,
+			PrimaryButtonText = "删除",
+			CloseButtonText = "取消",
+			DefaultButton = ContentDialogButton.Close,
+			XamlRoot = Content.XamlRoot
+		}.ShowAsync() != ContentDialogResult.Primary)
+		{
+			return;
+		}
+		try
+		{
+			if (!_config.ExcludedPaths.Any((string x) => string.Equals(x, item.Path, StringComparison.OrdinalIgnoreCase)))
+			{
+				_config.ExcludedPaths.Add(item.Path);
+			}
+			_config.Wallpapers.RemoveAll((WallpaperItem x) => string.Equals(x.Path, item.Path, StringComparison.OrdinalIgnoreCase));
+			foreach (string item2 in (from x in _config.Monitors
+				where string.Equals(x.Value.WallpaperId, item.Id, StringComparison.OrdinalIgnoreCase)
+				select x.Key).ToList())
+			{
+				_config.Monitors.Remove(item2);
+			}
+			ConfigStore.Save(_config);
+			ClearSelection();
+			await RefreshCatalogAsync();
+			ApplyFilter();
+			if (_host.IsRunning)
+			{
+				_host.Restart();
+			}
+			SetStatus("已删除“" + item.Title + "”（源文件保留）");
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("delete wallpaper failed", ex);
+			SetStatus("删除失败：" + ex.Message);
+		}
+	}
+
+	private void VolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+	{
+		VolumeValue.Text = $"{e.NewValue:F0}";
+		WallpaperItem wallpaperItem = CurrentWallpaper();
+		if (wallpaperItem != null && !(Math.Abs(wallpaperItem.Volume - e.NewValue) < 0.001))
+		{
+			wallpaperItem.Volume = e.NewValue;
+			Persist();
+			SendProperty("volume", wallpaperItem.Muted ? 0.0 : e.NewValue);
+		}
+	}
+
+	private void SpeedSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+	{
+		SpeedValue.Text = $"{e.NewValue:F1}×";
+		WallpaperItem wallpaperItem = CurrentWallpaper();
+		if (wallpaperItem != null && !(Math.Abs(wallpaperItem.Speed - e.NewValue) < 0.001))
+		{
+			wallpaperItem.Speed = e.NewValue;
+			Persist();
+			SendProperty("speed", e.NewValue);
+		}
+	}
+
+	private void ShaderSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+	{
+		ShaderValue.Text = $"{e.NewValue:F2}";
+		WallpaperItem wallpaperItem = CurrentWallpaper();
+		double num = ((wallpaperItem != null && wallpaperItem.ShaderParameters.TryGetValue("intensity", out var value)) ? value : 1.0);
+		if (wallpaperItem != null && !(Math.Abs(num - e.NewValue) < 0.001))
+		{
+			wallpaperItem.ShaderParameters["intensity"] = e.NewValue;
+			Persist();
+			SendProperty("shader", e.NewValue);
+		}
+	}
+
+	private void MuteToggle_Toggled(object sender, RoutedEventArgs e)
+	{
+		WallpaperItem wallpaperItem = CurrentWallpaper();
+		if (wallpaperItem != null && wallpaperItem.Muted != MuteToggle.IsOn)
+		{
+			wallpaperItem.Muted = MuteToggle.IsOn;
+			Persist();
+			SendProperty("volume", MuteToggle.IsOn ? 0.0 : wallpaperItem.Volume);
+		}
+	}
+
+	private void Persist()
+	{
+		try
+		{
+			_config.Wallpapers = _catalog.Items.ToList();
+			ConfigStore.Save(_config);
+		}
+		catch (Exception ex)
+		{
+			SetStatus("保存配置失败：" + ex.Message);
+		}
+	}
+
+	private void Apply_Click(object sender, RoutedEventArgs e)
+	{
+		ApplySelectedToTarget();
+	}
+
+	private void ApplyToMonitor_Click(object sender, RoutedEventArgs e)
+	{
+		ApplySelectedToTarget();
+	}
+
+	private void ApplySelectedToTarget()
+	{
+		WallpaperItem wallpaperItem = CurrentWallpaper();
+		if (wallpaperItem != null && TargetMonitorCombo.SelectedIndex >= 0 && TargetMonitorCombo.SelectedIndex < _monitors.Count)
+		{
+			MonitorDisplay monitorDisplay = _monitors[TargetMonitorCombo.SelectedIndex];
+			_config.Monitors[monitorDisplay.Device] = new MonitorAssignment
+			{
+				WallpaperId = wallpaperItem.Id,
+				Fps = _config.Performance.AcFps,
+				Enabled = true
+			};
+			Persist();
+			_host.Restart();
+			SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
+		}
+	}
+
+	private WallpaperItem? CurrentWallpaper()
+	{
+		return _selected ?? (WallpaperGrid.SelectedItem as WallpaperItem);
+	}
+
+	private string? CurrentTargetDevice()
+	{
+		if (TargetMonitorCombo.SelectedIndex < 0 || TargetMonitorCombo.SelectedIndex >= _monitors.Count)
+		{
+			return null;
+		}
+		return _monitors[TargetMonitorCombo.SelectedIndex].Device;
+	}
+
+	private void SendProperty(string name, double value)
+	{
+		string text = CurrentTargetDevice();
+		if (text != null && _host != null)
+		{
+			_host.SetProperty(text, name, value);
+		}
+	}
+
+	private void Preview_Click(object sender, RoutedEventArgs e)
+	{
+		WallpaperItem wallpaperItem = CurrentWallpaper();
+		if (wallpaperItem != null)
+		{
+			PreviewWindow previewWindow = new PreviewWindow(wallpaperItem);
+			previewWindow.Activate();
+			previewWindow.BringToFront();
+		}
+	}
+
+	private void Pause_Click(object sender, RoutedEventArgs e)
+	{
+		TogglePause();
+	}
+
+	private void TogglePause()
+	{
+		_paused = !_paused;
+		if (_paused)
+		{
+			_host.PauseAll();
+		}
+		else
+		{
+			_host.ResumeAll();
+		}
+		PauseLabel.Text = (_paused ? "播放" : "暂停");
+		_tray?.SetPaused(_paused);
+		SetStatus(_paused ? "壁纸已暂停" : "壁纸已恢复");
+	}
+
+	private void SelectTrayWallpaper(WallpaperItem item)
+	{
+		DispatcherQueue.TryEnqueue(() =>
+		{
+			_kind = item.Kind;
+			Nav.SelectedItem = Nav.MenuItems.FirstOrDefault((object x) => (x as NavigationViewItem)?.Tag as string == item.Kind.ToString());
+			ApplyFilter();
+			WallpaperGrid.SelectedItem = item;
+			ApplySelectedToTarget();
+		});
+	}
+
+	private void Settings_Saved(object? sender, ShellConfig config)
+	{
+		try
+		{
+			ConfigStore.Save(config);
+			_thumbnails = new ThumbnailService(config);
+			_host.Restart();
+			SetStatus("设置已保存，调度器已重启");
+		}
+		catch (Exception ex)
+		{
+			SetStatus("保存设置失败：" + ex.Message);
+		}
+	}
+
+	private void ShowSettings()
+	{
+		DispatcherQueue.TryEnqueue(() =>
+		{
+			AppWindow.Show();
+			Activate();
+			Nav.SelectedItem = Nav.MenuItems.FirstOrDefault((object x) => (x as NavigationViewItem)?.Tag as string == "Settings");
+		});
+	}
+
+	private void ShowFromTray()
+	{
+		DispatcherQueue.TryEnqueue(() =>
+		{
+			AppWindow.Show();
+			Activate();
+		});
+	}
+
+	private void HideToTray()
+	{
+		_ = _config.General.MinimizeToTray;
+		AppWindow.Hide();
+	}
+
+	private void ExitApp()
+	{
+		_exitRequested = true;
+		_tray?.Dispose();
+		_tray = null;
+		_host.Dispose();
+		Close();
+		Application.Current.Exit();
+	}
+
+	private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
+	{
+		if (!_exitRequested)
+		{
+			if (_config.General.MinimizeToTray)
+			{
+				args.Cancel = true;
+				HideToTray();
+			}
+			else
+			{
+				_exitRequested = true;
+				_host.Dispose();
+				_tray?.Dispose();
+			}
+		}
+	}
+
+	private void OnClosed(object sender, WindowEventArgs args)
+	{
+		_tray?.Dispose();
+		_tray = null;
+		_host.Dispose();
+	}
+
+	private void OnHostLog(string line)
+	{
+		string text;
+		if (line.Contains("host started", StringComparison.OrdinalIgnoreCase))
+		{
+			text = "调度器已启动";
+		}
+		else if (line.Contains("host exited", StringComparison.OrdinalIgnoreCase))
+		{
+			text = "调度器已退出";
+		}
+		else if (line.Contains("property volume", StringComparison.OrdinalIgnoreCase))
+		{
+			text = "音量已应用";
+		}
+		else if (line.Contains("property speed", StringComparison.OrdinalIgnoreCase))
+		{
+			text = "速度已应用";
+		}
+		else if (line.Contains("property shader", StringComparison.OrdinalIgnoreCase))
+		{
+			text = "着色器参数已应用";
+		}
+		else
+		{
+			text = ((!line.StartsWith("ERR ", StringComparison.OrdinalIgnoreCase)) ? null : line);
+		}
+		string friendly = text;
+		if (friendly != null)
+		{
+			DispatcherQueue.TryEnqueue(() =>
+			{
+				SetStatus(friendly);
+			});
+		}
+	}
+}

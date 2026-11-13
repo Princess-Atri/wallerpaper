@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/SceneWallpaperHost/SceneWallpaperHost.csproj" />
+    <Project Path="samples/VideoWallpaperHost/VideoWallpaperHost.csproj" />
+    <Project Path="samples/WallerpaperHost/WallerpaperHost.csproj" />
+    <Project Path="samples/WallerpaperShell/WallerpaperShell.csproj" />
+    <Project Path="samples/WebWallpaperHost/WebWallpaperHost.csproj" />
+  </Folder>
+  <Folder Name="/samples/Installer/">
+    <Project Path="samples/Installer/WallerpaperSetup/WallerpaperSetup.csproj" />
+  </Folder>
+  <Folder Name="/samples/Shared/">
+    <Project Path="samples/Shared/Wallerpaper.Diagnostics/Wallerpaper.Diagnostics.csproj" />
+    <Project Path="samples/Shared/WorkerWRuntime/WorkerWRuntime.csproj" />
+  </Folder>
+</Solution>

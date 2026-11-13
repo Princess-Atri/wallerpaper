@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Wallerpaper.Shell.Views.SuperResolutionView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Padding="24,18,28,32" Spacing="16" MaxWidth="1100"
+                    HorizontalAlignment="Left">
+            <TextBlock Text="超分" FontSize="28" FontWeight="SemiBold"/>
+            <TextBlock Text="上传长视频，使用 Real-ESRGAN 逐帧超分并生成新的视频壁纸。"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+            <Grid ColumnSpacing="28">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Width="236" Height="480"
+                        CornerRadius="16"
+                        Background="#B31B1F26"
+                        BorderThickness="1"
+                        BorderBrush="#44FFFFFF">
+                    <Grid>
+                        <StackPanel VerticalAlignment="Center" Spacing="14"
+                                    HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xE8B7;" FontSize="46"
+                                      Foreground="#CCFFFFFF"/>
+                            <TextBlock x:Name="SelectedFileText"
+                                       Text="尚未选择视频"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center"
+                                       MaxWidth="190"
+                                       Foreground="#DDFFFFFF"/>
+                            <Button x:Name="ChooseButton"
+                                    Content="选择视频"
+                                    Click="Choose_Click"
+                                    HorizontalAlignment="Center"
+                                    Padding="20,8,20,8"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <StackPanel Grid.Column="1" Spacing="14" MaxWidth="520">
+                    <TextBlock Text="超分类型" FontSize="18" FontWeight="SemiBold"/>
+
+                    <ComboBox x:Name="FactorCombo" Header="超分倍数"
+                              HorizontalAlignment="Stretch"
+                              SelectedIndex="0">
+                        <ComboBoxItem Content="2×" Tag="2"/>
+                        <ComboBoxItem Content="4×" Tag="4"/>
+                    </ComboBox>
+
+                    <ComboBox x:Name="ModelCombo" Header="模型"
+                              HorizontalAlignment="Stretch"
+                              SelectedIndex="0">
+                        <ComboBoxItem Content="动漫视频（realesr-animevideov3）"
+                                      Tag="realesr-animevideov3"/>
+                        <ComboBoxItem Content="通用照片（realesrgan-x4plus）"
+                                      Tag="realesrgan-x4plus"/>
+                    </ComboBox>
+
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="StartButton"
+                                Content="开始超分"
+                                Click="Start_Click"
+                                IsEnabled="False"
+                                Padding="24,8,24,8"
+                                Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                Foreground="White"/>
+                        <Button x:Name="CancelButton"
+                                Content="取消"
+                                Click="Cancel_Click"
+                                IsEnabled="False"
+                                Padding="20,8,20,8"/>
+                    </StackPanel>
+
+                    <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100"
+                                 IsIndeterminate="False" Height="6"/>
+                    <TextBlock x:Name="StatusText"
+                               Text="先选择视频，再选择倍数和模型。"
+                               TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+                    <TextBlock Text="长视频会逐帧提取并超分，可能运行数小时，并占用大量显存和磁盘空间。"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

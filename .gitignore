@@ -1,0 +1,40 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+.vs/
+*.user
+*.suo
+
+# Local research / ACL recovery artifacts (not part of the product)
+research/
+.acl-recovery/
+.keep
+
+# Runtime artifacts
+*.log
+*.dmp
+CrashDumps/
+
+# Large local data (wallpaper cache / library / recycled assets)
+cache/
+library/
+recycle/
+scenes/
+
+# Local toolchains and package caches
+.dotnet/
+.nuget/
+
+# Third-party binary tooling (download on demand, not source)
+tools/ai/
+tools/ilspy/
+REAL-ERGAN/
+
+# Large third-party binaries and installer payloads
+samples/VideoWallpaperHost/libmpv-2.dll
+samples/Installer/WallerpaperSetup/Resources/payload.zip
+
+# Generated test measurements
+perf-samples*.csv
+scene-load-results.jsonl

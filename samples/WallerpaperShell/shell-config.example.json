@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "general": {
+    "startWithWindows": false,
+    "startMinimized": false,
+    "minimizeToTray": true,
+    "language": "zh-CN"
+  },
+  "performance": {
+    "policy": "pause",
+    "triggerOnMaximized": false,
+    "acFps": 60,
+    "batteryFps": 30,
+    "renderScale": 1.0,
+    "maxTextureMemoryMb": 512,
+    "maxParticles": 1024,
+    "maxConcurrentHosts": 3,
+    "pauseOnBatterySaver": false
+  },
+  "cache": {
+    "directory": "%LOCALAPPDATA%\\Wallerpaper\\cache",
+    "maxSizeMb": 2048,
+    "thumbnailWidth": 480,
+    "thumbnailHeight": 270,
+    "keepThumbnails": true
+  },
+  "host": {
+    "hostExe": "C:\\Users\\you\\Wallerpaper\\WallerpaperHost.exe",
+    "schedulerConfig": "%LOCALAPPDATA%\\Wallerpaper\\scheduler.json",
+    "childExe": "C:\\Users\\you\\Wallerpaper\\SceneWallpaperHost.exe",
+    "videoChildExe": "C:\\Users\\you\\Wallerpaper\\VideoWallpaperHost.exe",
+    "webChildExe": "C:\\Users\\you\\Wallerpaper\\WebWallpaperHost.exe",
+    "autoStartHost": true,
+    "fallbackImage": ""
+  },
+  "library": [
+    {
+      "path": "%USERPROFILE%\\Videos\\Wallerpaper",
+      "kind": "Video",
+      "recursive": true,
+      "enabled": true
+    },
+    {
+      "path": "%USERPROFILE%\\Documents\\Wallerpaper\\Web",
+      "kind": "Web",
+      "recursive": true,
+      "enabled": true
+    },
+    {
+      "path": "%USERPROFILE%\\Documents\\Wallerpaper\\Scenes",
+      "kind": "Scene",
+      "recursive": true,
+      "enabled": true
+    }
+  ],
+  "wallpapers": [],
+  "monitors": {
+    "\\\\.\\DISPLAY1": {
+      "wallpaperId": "replace-with-wallpaper-id",
+      "fps": 60,
+      "enabled": true
+    }
+  }
+}

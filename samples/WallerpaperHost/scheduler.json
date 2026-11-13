@@ -1,0 +1,37 @@
+{
+  "childExe": "C:\\Users\\legion\\WallerpaperBuild\\scenehost\\SceneWallpaperHost.exe",
+  "scene": "C:\\Users\\legion\\WallerpaperBuild\\scenehost\\scenes\\audio_gradient\\scene.json",
+  "fallbackImage": "fallback.png",
+  "policy": "pause",
+  "triggerOnMaximized": false,
+  "acFps": 60,
+  "batteryFps": 30,
+  "excludeProcesses": [
+    "Taskmgr.exe",
+    "SystemSettings.exe",
+    "ApplicationFrameHost.exe",
+    "ShellExperienceHost.exe",
+    "SearchHost.exe",
+    "StartMenuExperienceHost.exe",
+    "LockApp.exe",
+    "WallerpaperHost.exe",
+    "SceneWallpaperHost.exe"
+  ],
+  "fullscreenScanProcesses": [
+    "PotPlayerMini64.exe",
+    "mpv.exe",
+    "vlc.exe",
+    "wmplayer.exe",
+    "msedge.exe",
+    "chrome.exe",
+    "firefox.exe"
+  ],
+  "excludeTitles": ["Task Manager", "任务管理器", "Settings", "设置"],
+  "excludeClasses": ["TaskManagerWindow", "ApplicationFrameWindow"],
+  "monitors": {},
+  "watchdog": {
+    "maxRestarts": 3,
+    "restartWindowSeconds": 60,
+    "restartDelayMs": 1000
+  }
+}

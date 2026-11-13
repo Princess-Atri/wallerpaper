@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Wallerpaper.Shell.Views.AiInterpolationView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Padding="24,18,28,32" Spacing="16" MaxWidth="1100"
+                    HorizontalAlignment="Left">
+            <TextBlock Text="AI 补帧" FontSize="28" FontWeight="SemiBold"/>
+            <TextBlock Text="用 RIFE 给视频生成中间帧，提高播放帧率。"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+            <Grid ColumnSpacing="28">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Width="236" Height="480" CornerRadius="16"
+                        Background="#B31B1F26"
+                        BorderThickness="1" BorderBrush="#44FFFFFF">
+                    <StackPanel VerticalAlignment="Center" Spacing="14"
+                                HorizontalAlignment="Center">
+                        <FontIcon Glyph="&#xE8B7;" FontSize="46" Foreground="#CCFFFFFF"/>
+                        <TextBlock x:Name="SelectedFileText" Text="尚未选择视频"
+                                   TextWrapping="Wrap" TextAlignment="Center"
+                                   MaxWidth="190" Foreground="#DDFFFFFF"/>
+                        <Button x:Name="ChooseButton" Content="选择视频"
+                                Click="Choose_Click" HorizontalAlignment="Center"
+                                Padding="20,8,20,8"/>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Grid.Column="1" Spacing="14" MaxWidth="520">
+                    <TextBlock Text="补帧设置" FontSize="18" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="FactorCombo" Header="补帧倍数"
+                              HorizontalAlignment="Stretch" SelectedIndex="0">
+                        <ComboBoxItem Content="2×（30 → 60 fps）" Tag="2"/>
+                        <ComboBoxItem Content="4×（30 → 120 fps）" Tag="4"/>
+                    </ComboBox>
+
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="StartButton" Content="开始补帧"
+                                Click="Start_Click" IsEnabled="False"
+                                Padding="24,8,24,8"
+                                Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                Foreground="White"/>
+                        <Button x:Name="CancelButton" Content="取消"
+                                Click="Cancel_Click" IsEnabled="False"
+                                Padding="20,8,20,8"/>
+                    </StackPanel>
+
+                    <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100"
+                                 IsIndeterminate="False" Height="6"/>
+                    <TextBlock x:Name="StatusText" Text="先选择视频，再选择倍数。"
+                               TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock Text="补帧会逐帧生成中间帧，可能运行较长时间，并占用较多显卡、内存和磁盘空间。"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

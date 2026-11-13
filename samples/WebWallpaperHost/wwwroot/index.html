@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wallerpaper Web Demo</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05070d;cursor:none;}
+  canvas{display:block;width:100%;height:100%;}
+  #hud{position:fixed;left:18px;bottom:16px;color:#8fa8c8;font:13px/1.5 Consolas,monospace;
+       pointer-events:none;text-shadow:0 1px 2px #000;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">wallerpaper web demo — move mouse / play audio</div>
+<script>
+(() => {
+  const c = document.getElementById('c');
+  const ctx = c.getContext('2d');
+  let W = 0, H = 0, dpr = Math.devicePixelRatio || 1;
+  let mx = innerWidth / 2, my = innerHeight / 2;
+  let idle = false;
+  let audio = { bins: [], level: 0 };
+
+  function resize() {
+    dpr = Math.devicePixelRatio || 1;
+    W = innerWidth; H = innerHeight;
+    c.width = Math.floor(W * dpr);
+    c.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  function onMouse(e) {
+    const m = e.detail || e;
+    mx = m.x; my = m.y;
+  }
+  addEventListener('wallerpaper:mousemove', onMouse);
+
+  function onAudio(e) {
+    audio = e.detail || audio;
+  }
+  addEventListener('wallerpaper:audio', onAudio);
+  addEventListener('wallerpaper:idle', e => { idle = !!(e.detail && e.detail.idle); });
+
+  let t = 0;
+  const particles = Array.from({length: 70}, () => ({
+    x: Math.random(), y: Math.random(), z: .2 + Math.random() * .8
+  }));
+
+  function frame() {
+    t += idle ? .006 : .016;
+    ctx.fillStyle = 'rgba(3,6,14,0.30)';
+    ctx.fillRect(0, 0, W, H);
+
+    const g = ctx.createRadialGradient(mx, my, 0, mx, my, 420);
+    g.addColorStop(0, 'rgba(70,160,255,0.28)');
+    g.addColorStop(1, 'rgba(4,8,20,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    const bass = (audio.bins && audio.bins.length)
+      ? audio.bins.slice(0, 8).reduce((a, b) => a + b, 0) / 8 : 0;
+
+    for (const p of particles) {
+      const dx = mx - p.x * W;
+      const dy = my - p.y * H;
+      const d = Math.hypot(dx, dy) || 1;
+      p.x += (dx / d) * 0.0007 * p.z * (1 + bass * 4);
+      p.y += (dy / d) * 0.0007 * p.z * (1 + bass * 4);
+      if (p.x < 0) p.x = 1; if (p.x > 1) p.x = 0;
+      if (p.y < 0) p.y = 1; if (p.y > 1) p.y = 0;
+
+      const r = 1 + p.z * 2.2 + bass * 2;
+      ctx.beginPath();
+      ctx.arc(p.x * W, p.y * H, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(120,190,255,' + (0.18 + p.z * 0.4) + ')';
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = 'rgba(100,180,255,0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(mx, my, 20 + bass * 40 + Math.sin(t * 2) * 4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const bins = audio.bins || [];
+    const bars = bins.length ? bins : new Array(32).fill(0);
+    const bw = Math.max(2, W / bars.length - 3);
+    for (let i = 0; i < bars.length; i++) {
+      const h = 12 + bars[i] * Math.min(180, H * 0.25);
+      ctx.fillStyle = `hsl(${195 + i * 2}, 80%, ${45 + bars[i] * 25}%)`;
+      ctx.fillRect(i * (bw + 3), H - h - 8, bw, h);
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

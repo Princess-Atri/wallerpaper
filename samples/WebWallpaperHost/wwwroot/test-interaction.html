@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wallerpaper Interaction Test</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#06080f;cursor:none;}
+  canvas{display:block;width:100%;height:100%;}
+  #hud{position:fixed;left:20px;top:18px;color:#b8d7ff;font:14px/1.6 Consolas,monospace;
+       pointer-events:none;text-shadow:0 0 6px #000;white-space:pre;}
+  #trap{position:fixed;right:26px;bottom:26px;padding:14px 18px;border:1px solid #ff6b6b;
+        color:#ffb3b3;background:rgba(60,10,10,.55);font:14px Consolas,monospace;pointer-events:none;}
+  #ring{position:fixed;left:0;top:0;width:0;height:0;border:1px solid #6cf;border-radius:50%;
+        pointer-events:none;transform:translate(-50%,-50%);box-shadow:0 0 18px #38f;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="ring"></div>
+<div id="trap">CLICK TRAP — page click should stay 0</div>
+<script>
+(() => {
+  const c = document.getElementById('c');
+  const ctx = c.getContext('2d');
+  const hud = document.getElementById('hud');
+  const ring = document.getElementById('ring');
+  let W=0,H=0,dpr=1;
+  let mx=-100,my=-100,inside=false,idle=false;
+  let audio={bins:[],level:0};
+  let pageClicks=0, nativeClicks=0;
+  let lastMousePost=0,lastAudioPost=0;
+
+  function resize(){
+    dpr=window.devicePixelRatio||1; W=innerWidth; H=innerHeight;
+    c.width=Math.floor(W*dpr); c.height=Math.floor(H*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  addEventListener('resize',resize); resize();
+
+  function post(obj){
+    try { window.chrome.webview.postMessage(obj); } catch(e) {}
+  }
+
+  function onMouse(e){
+    const d=e.detail||e;
+    mx=d.x; my=d.y; inside=!!d.inside;
+    ring.style.left=mx+'px'; ring.style.top=my+'px';
+    ring.style.width=ring.style.height=(28+Math.sin(performance.now()/180)*5)+'px';
+    const now=performance.now();
+    if(now-lastMousePost>100){
+      lastMousePost=now;
+      post({type:'test-mouse',x:Math.round(mx),y:Math.round(my),inside,pageClicks,nativeClicks,ts:Date.now()});
+    }
+  }
+  addEventListener('wallerpaper:mousemove',onMouse);
+
+  function onAudio(e){
+    audio=e.detail||{bins:[],level:0};
+    const now=performance.now();
+    if(now-lastAudioPost>100){
+      lastAudioPost=now;
+      const bins=audio.bins||[];
+      post({type:'test-audio',level:audio.level||0,bins:bins.length,
+            peak:bins.length?Math.max(...bins):0,ts:Date.now()});
+    }
+  }
+  addEventListener('wallerpaper:audio',onAudio);
+  addEventListener('wallerpaper:idle',e=>{ idle=!!(e.detail&&e.detail.idle); });
+
+  // Any native click that reaches the page is a click-through failure.
+  addEventListener('click', e=>{ pageClicks++; post({type:'test-click-reached',x:e.clientX,y:e.clientY,ts:Date.now()}); }, true);
+  addEventListener('mousedown', e=>{ nativeClicks++; }, true);
+
+  const particles=Array.from({length:90},()=>({x:Math.random(),y:Math.random(),z:.2+Math.random()*.8}));
+  let t=0;
+  function frame(){
+    t += idle?.006:.016;
+    ctx.fillStyle='rgba(4,8,16,.28)'; ctx.fillRect(0,0,W,H);
+
+    const g=ctx.createRadialGradient(mx,my,0,mx,my,360);
+    g.addColorStop(0,'rgba(70,180,255,.35)'); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+    const bass=(audio.bins&&audio.bins.length)?audio.bins.slice(0,8).reduce((a,b)=>a+b,0)/8:0;
+    for(const p of particles){
+      const dx=mx-p.x*W, dy=my-p.y*H, d=Math.hypot(dx,dy)||1;
+      p.x+=(dx/d)*.0012*p.z*(1+bass*3); p.y+=(dy/d)*.0012*p.z*(1+bass*3);
+      if(p.x<0)p.x=1; if(p.x>1)p.x=0; if(p.y<0)p.y=1; if(p.y>1)p.y=0;
+      ctx.beginPath(); ctx.arc(p.x*W,p.y*H,1.2+p.z*2.5+bass*2,0,Math.PI*2);
+      ctx.fillStyle='rgba(130,200,255,'+(.18+p.z*.35)+')'; ctx.fill();
+    }
+
+    ctx.strokeStyle='rgba(100,210,255,.9)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(mx-40,my); ctx.lineTo(mx+40,my); ctx.moveTo(mx,my-40); ctx.lineTo(mx,my+40); ctx.stroke();
+    ctx.beginPath(); ctx.arc(mx,my,18+bass*35,0,Math.PI*2); ctx.stroke();
+
+    const bins=audio.bins||[];
+    const bw=Math.max(2,W/64-2);
+    for(let i=0;i<32;i++){
+      const v=bins[i]||0;
+      ctx.fillStyle=`hsl(${190+i*3},85%,${45+v*30}%)`;
+      ctx.fillRect(20+i*(bw+2),H-24-(20+v*150),bw,20+v*150);
+    }
+
+    hud.textContent =
+      `mouse: x=${Math.round(mx)} y=${Math.round(my)} inside=${inside}\n` +
+      `audio: level=${(audio.level||0).toFixed(2)} bins=${bins.length} peak=${bins.length?Math.max(...bins).toFixed(2):'0.00'}\n` +
+      `idle=${idle} pageClicks=${pageClicks} nativeClicks=${nativeClicks}`;
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  post({type:'test-page-ready',ts:Date.now()});
+})();
+</script>
+</body>
+</html>

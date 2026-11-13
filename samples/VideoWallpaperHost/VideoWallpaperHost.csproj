@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>VideoWallpaperHost</AssemblyName>
+    <RootNamespace>VideoWallpaperHost</RootNamespace>
+  </PropertyGroup>
+
+  <!-- libmpv is not a NuGet package with a native DLL; place libmpv-2.dll next to the exe. -->
+  <ItemGroup>
+    <None Include="libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('libmpv-2.dll')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shared\WorkerWRuntime\WorkerWRuntime.csproj" />
+    <ProjectReference Include="..\Shared\Wallerpaper.Diagnostics\Wallerpaper.Diagnostics.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Pipelines" Version="9.0.9" />
+    <PackageReference Include="System.Text.Json" Version="9.0.9" />
+  </ItemGroup>
+
+</Project>
+

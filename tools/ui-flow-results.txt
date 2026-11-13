@@ -1,0 +1,23 @@
+﻿08:34:25 app started pid=10032 in 0.62s
+08:34:25 video cards named 'demo': 3
+08:34:26 thumbnail cache files: 4
+08:34:26 screenshot: D:\Desktop\wallerpaper c\docs\assets\shell-flow-video.png
+08:34:31 host processes after apply: VideoWallpaperHost,WallerpaperHost
+08:34:32 config after property edit: volume=33 speed=1.25 muted=False
+08:34:32 screenshot: D:\Desktop\wallerpaper c\docs\assets\shell-flow-properties.png
+08:34:34 preview window: 预览 · demo
+08:34:34 screenshot: D:\Desktop\wallerpaper c\docs\assets\shell-flow-preview.png
+08:34:36 minimized to tray, process alive, tray hwnd=0xD0774
+08:34:37 tray menu items visible: 打开 Wallerpaper, 暂停壁纸, 快速切换壁纸, 设置, 退出
+08:34:37 screenshot: D:\Desktop\wallerpaper c\docs\assets\shell-flow-tray.png
+08:34:40 pause label switched to: 播放
+08:34:41 settings scrolled to bottom: True
+08:34:44 config after settings: acFps=50 autostart=True
+08:34:44 HKCU Run value: "C:\Users\legion\WallerpaperBuild\shell\WallerpaperShell.exe" --minimized
+08:34:44 screenshot: D:\Desktop\wallerpaper c\docs\assets\shell-flow-settings.png
+08:34:49 app started pid=15396 in 0.46s
+08:34:49 relaunch loaded: acFps=50 autostart=True
+08:34:52 relaunch host processes: VideoWallpaperHost,WallerpaperHost
+08:35:00 autostart simulation: pid=9128, tray=0xA07AE, mainVisible=False
+08:35:02 autostart simulation host processes: VideoWallpaperHost,WallerpaperHost
+08:35:05 autostart restored to original value
