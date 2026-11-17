@@ -305,11 +305,22 @@ internal sealed class VideoHostApp
                     {
                         var ready = _mpv!.WaitForFirstFrame(4000);
                         _worker.ShowWallpaper(ready ? "first frame" : "timeout");
+                        // The scheduler preloads a replacement renderer and
+                        // only tears the previous one down after this arrives,
+                        // so the desktop is never left without a picture.
+                        SendEvent("shown", new Dictionary<string, object?>
+                        {
+                            ["phase"] = ready ? "first-frame" : "timeout"
+                        });
                     }
                     catch (Exception ex)
                     {
                         Log($"show wallpaper failed: {ex.Message}");
                         _worker.ShowWallpaper("error");
+                        SendEvent("shown", new Dictionary<string, object?>
+                        {
+                            ["phase"] = "error"
+                        });
                     }
                 });
                 _fpsTimer = new Timer(_ =>

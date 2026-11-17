@@ -39,3 +39,4 @@ samples/Installer/WallerpaperSetup/Resources/payload.zip
 # Generated test measurements
 perf-samples*.csv
 scene-load-results.jsonl
+tools/switch-flash-*.csv

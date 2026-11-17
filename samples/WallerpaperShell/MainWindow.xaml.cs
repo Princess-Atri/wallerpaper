@@ -5612,31 +5612,39 @@ public sealed partial class MainWindow : Window
 				          wallpaperItem.Title);
 				return;
 			}
-			// Keep the real desktop image in sync before the renderer is
-			// rebuilt: the WorkerW layer is briefly removed while switching.
-			var frameTask = Task.Run(() => DesktopFirstFrameService.ApplyAsync(
-				wallpaperItem, monitorDisplay.Width, monitorDisplay.Height));
-			var canLiveSwitch = wallpaperItem.Kind == WallpaperKind.Video &&
-				!string.Equals(previousItem?.Path, wallpaperItem.Path, StringComparison.OrdinalIgnoreCase) &&
-				_host.IsRunning;
-			if (canLiveSwitch)
+			// Preload the replacement renderer and swap only once it has a
+			// frame. The current wallpaper keeps playing through the whole
+			// preload, so the desktop is never exposed and the system
+			// wallpaper does not have to be touched at all — touching it makes
+			// Explorer insert a new WorkerW above the video, which is what the
+			// old code showed as a flash of the still image.
+			if (await TryPreloadSwapAsync(monitorDisplay.Device))
 			{
+				SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
+			}
+			else if (wallpaperItem.Kind == WallpaperKind.Video &&
+			         !string.Equals(previousItem?.Path, wallpaperItem.Path, StringComparison.OrdinalIgnoreCase) &&
+			         _host.IsRunning)
+			{
+				// Fallback for a video the scheduler could not preload: mpv
+				// loads the next file in the same process (~40ms gap).
 				ScheduleFastSwitch(monitorDisplay.Device, wallpaperItem.Path);
+				SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
 			}
 			else
 			{
-				// The renderer is re-created, so the desktop is exposed for a
-				// moment. Waiting for the new frame (capped so a slow disk
-				// cannot stall the switch) keeps that gap showing the new
-				// wallpaper instead of the previous one.
+				// Last resort: rebuild the host. The desktop is exposed for a
+				// moment, so put the new wallpaper's first frame on it first.
+				var frameTask = Task.Run(() => DesktopFirstFrameService.ApplyAsync(
+					wallpaperItem, monitorDisplay.Width, monitorDisplay.Height));
 				try
 				{
-					await Task.WhenAny(frameTask, Task.Delay(400));
+					await Task.WhenAny(frameTask, Task.Delay(1200));
 				}
 				catch { }
 				_host.Restart();
+				SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
 			}
-			SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
 			DispatcherQueue.TryEnqueue(async () =>
 			{
 				try
@@ -5649,6 +5657,55 @@ public sealed partial class MainWindow : Window
 					SetStatus("锁屏壁纸设置失败：" + ex.Message);
 				}
 			});
+		}
+	}
+
+	/// <summary>
+	/// Asks the scheduler to build the next renderer behind the current one and
+	/// promote it once its first frame is on screen. Returns false when the
+	/// host is not running or the swap failed, so the caller can fall back to
+	/// rebuilding the host.
+	/// </summary>
+	private async Task<bool> TryPreloadSwapAsync(string device)
+	{
+		if (!_host.IsRunning)
+			return false;
+
+		var ack = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+		void OnApplied(string appliedDevice)
+		{
+			if (string.Equals(appliedDevice, device, StringComparison.OrdinalIgnoreCase))
+				ack.TrySetResult(true);
+		}
+		void OnFailed(string failedDevice)
+		{
+			if (string.Equals(failedDevice, device, StringComparison.OrdinalIgnoreCase))
+				ack.TrySetResult(false);
+		}
+
+		_host.ApplyApplied += OnApplied;
+		_host.ApplyFailed += OnFailed;
+		try
+		{
+			if (!_host.Apply(device))
+				return false;
+			var completed = await Task.WhenAny(ack.Task, Task.Delay(12000));
+			if (!ReferenceEquals(completed, ack.Task))
+			{
+				AppLog.Info($"preload swap timed out for {device}");
+				return false;
+			}
+			return await ack.Task;
+		}
+		catch (Exception ex)
+		{
+			AppLog.Error("preload swap failed", ex);
+			return false;
+		}
+		finally
+		{
+			_host.ApplyApplied -= OnApplied;
+			_host.ApplyFailed -= OnFailed;
 		}
 	}
 

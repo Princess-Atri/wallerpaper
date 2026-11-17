@@ -26,6 +26,8 @@ public sealed class HostBridge : IDisposable
     public event Action<double, int>? FpsReported;
     public event Action<string>? SwitchApplied;
     public event Action<string>? SwitchFailed;
+    public event Action<string>? ApplyApplied;
+    public event Action<string>? ApplyFailed;
     public bool IsRunning => _process is { HasExited: false };
 
     public void Start()
@@ -82,6 +84,18 @@ public sealed class HostBridge : IDisposable
                 {
                     var at = e.Data.IndexOf("switch-failed device=", StringComparison.OrdinalIgnoreCase);
                     SwitchFailed?.Invoke(e.Data[(at + "switch-failed device=".Length)..].Trim());
+                }
+                else if (e.Data.Contains("apply-applied device=", StringComparison.OrdinalIgnoreCase))
+                {
+                    var at = e.Data.IndexOf("apply-applied device=", StringComparison.OrdinalIgnoreCase);
+                    ApplyApplied?.Invoke(
+                        e.Data[(at + "apply-applied device=".Length)..].Trim().Split(' ')[0]);
+                }
+                else if (e.Data.Contains("apply-failed device=", StringComparison.OrdinalIgnoreCase))
+                {
+                    var at = e.Data.IndexOf("apply-failed device=", StringComparison.OrdinalIgnoreCase);
+                    ApplyFailed?.Invoke(
+                        e.Data[(at + "apply-failed device=".Length)..].Trim().Split(' ')[0]);
                 }
 
                 var marker = e.Data.IndexOf("fps source=", StringComparison.OrdinalIgnoreCase);
@@ -153,6 +167,22 @@ public sealed class HostBridge : IDisposable
         if (!IsRunning || string.IsNullOrWhiteSpace(device) || !File.Exists(path))
             return false;
         Send(JsonSerializer.Serialize(new { cmd = "switch", device, path }));
+        return true;
+    }
+
+    /// <summary>
+    /// Ask the running scheduler to preload a replacement renderer and swap
+    /// it in once it has a frame, instead of tearing the whole host down and
+    /// exposing the desktop between the two renderers.
+    /// </summary>
+    public bool Apply(string device)
+    {
+        if (!IsRunning || string.IsNullOrWhiteSpace(device))
+            return false;
+        // The host re-reads scheduler.json for the swap, so the new assignment
+        // has to be on disk before the command is written.
+        WriteSchedulerConfig();
+        Send(JsonSerializer.Serialize(new { cmd = "apply", device }));
         return true;
     }
 

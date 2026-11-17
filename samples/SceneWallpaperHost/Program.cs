@@ -26,6 +26,8 @@ internal static class Program
     private static bool _captured;
     private static int _lastOps;
     private static long _frames;
+    /// <summary>True once the window is visible / "shown" was reported.</summary>
+    private static bool _shown;
     private static double _lastStatsAt;
     private static double _lastCpuSeconds;
     private static double _lastScriptMs;
@@ -64,7 +66,7 @@ internal static class Program
                 _running = false;
             };
 
-            if (!worker.CreateAndAttach())
+            if (!worker.CreateAndAttach(showWindow: false))
             {
                 Console.Error.WriteLine("E_WORKERW: CreateAndAttach failed");
                 return 3;
@@ -192,6 +194,16 @@ internal static class Program
                     }
                     _frames++;
                     _panelFrames++;
+                    if (!_shown)
+                    {
+                        // First real frame is on the swap chain: reveal now.
+                        // Until then the desktop keeps the previous renderer
+                        // (or the first-frame wallpaper) instead of a blank
+                        // window.
+                        _shown = true;
+                        worker.ShowWallpaper("first frame");
+                        SendEvent(new { type = "shown", phase = "first-frame", frames = _frames });
+                    }
                     if (_statsToggleRequested)
                     {
                         _statsToggleRequested = false;

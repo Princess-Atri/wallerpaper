@@ -191,6 +191,8 @@ internal sealed class WebHostApp
     private bool _shuttingDown;
     private volatile bool _stopping;
     private int _crashCount;
+    /// <summary>0 until the window has been revealed and "shown" reported.</summary>
+    private int _shown;
 
     /// <summary>How many WebView2 render-process failures are rebuilt before
     /// the host gives up and shows a static placeholder.</summary>
@@ -215,7 +217,7 @@ internal sealed class WebHostApp
                 RequestStop();
             };
 
-            if (!_worker.CreateAndAttach())
+            if (!_worker.CreateAndAttach(showWindow: false))
             {
                 SendError("E_WORKERW",
                     "Failed to find/attach WorkerW. Check explorer.exe and run at Medium integrity.");
@@ -336,6 +338,24 @@ internal sealed class WebHostApp
         }
     }
 
+    private void ShowFirstPage(string reason)
+    {
+        if (Interlocked.Exchange(ref _shown, 1) != 0)
+            return;
+        try
+        {
+            _worker?.ShowWallpaper(reason);
+        }
+        catch (Exception ex)
+        {
+            Log($"show wallpaper failed: {ex.Message}");
+        }
+        SendEvent("shown", new Dictionary<string, object?>
+        {
+            ["phase"] = reason
+        });
+    }
+
     private async Task InitializeAsync()
     {
         try
@@ -343,11 +363,23 @@ internal sealed class WebHostApp
             Log($"web init: html={_options.HtmlPath ?? "<none>"}, url={_options.Url ?? "<none>"}, " +
                 $"gpu={(!_options.NoGpu ? "on" : "off")}, idle={_options.IdleSeconds}s");
 
-            _web = new WebViewHost(_options, Log);
-            _web.Loaded += () => SendEvent("loaded", new Dictionary<string, object?>
+            // A page that never finishes loading must not leave the desktop
+            // without a renderer: reveal the (possibly blank) window anyway.
+            _ = Task.Run(async () =>
             {
-                ["url"] = _options.Url ?? "wallerpaper.local"
+                await Task.Delay(4000);
+                ShowFirstPage("timeout");
             });
+
+            _web = new WebViewHost(_options, Log);
+            _web.Loaded += () =>
+            {
+                SendEvent("loaded", new Dictionary<string, object?>
+                {
+                    ["url"] = _options.Url ?? "wallerpaper.local"
+                });
+                ShowFirstPage("page loaded");
+            };
             _web.ProcessFailed += (message) => RecoverFromWebCrash(message);
 
             await _web.InitializeAsync(_worker!.WindowHandle, _options);

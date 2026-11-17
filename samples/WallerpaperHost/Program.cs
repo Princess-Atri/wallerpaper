@@ -21,6 +21,10 @@ internal static class Program
     private static readonly Dictionary<string, int> PendingFullscreen = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object Gate = new();
     private static SchedulerConfig _config = null!;
+    private static string _configPath = "";
+    /// <summary>How long a preloaded renderer gets to report its first frame
+    /// before the swap is abandoned and the current wallpaper stays up.</summary>
+    private const int PreloadTimeoutMs = 8000;
     private static JobObject? _job;
     private static MonitorManager _monitors = null!;
     private static ForegroundWatcher _foreground = null!;
@@ -76,6 +80,7 @@ internal static class Program
         try
         {
             _config = SchedulerConfig.Load(Path.GetFullPath(configPath));
+            _configPath = Path.GetFullPath(configPath);
             _forceBattery = forceBattery;
             if (forceBattery)
                 _powerAc = false;
@@ -192,6 +197,19 @@ internal static class Program
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             var cmd = root.TryGetProperty("cmd", out var c) ? c.GetString() : null;
+            if (cmd == "apply")
+            {
+                // The shell rewrites scheduler.json, then asks for the swap so
+                // the new renderer can be preloaded behind the current one.
+                var applyDevice = root.TryGetProperty("device", out var ad) ? ad.GetString() : null;
+                if (string.IsNullOrWhiteSpace(applyDevice))
+                {
+                    _log("apply-failed reason=no-device");
+                    return;
+                }
+                ApplyMonitor(applyDevice);
+                return;
+            }
             if (cmd == "switch")
             {
                 var switchDevice = root.TryGetProperty("device", out var sd) ? sd.GetString() : null;
@@ -412,7 +430,17 @@ internal static class Program
         }
     }
 
-    private static void AddMonitor(MonitorInfo monitor)
+    private sealed record ResolvedSpec(
+        string Type, string Path, string SecondPath, string ChildExe, int Fps,
+        string Fit, double Zoom, double RenderScale, double Volume, double Speed,
+        double ShaderIntensity, double Brightness, double Contrast, double Highlights,
+        double Hue, double Temperature, double Exposure, double Sharpness);
+
+    /// <summary>
+    /// Flattens the global + per-monitor scheduler config into what a single
+    /// renderer needs. Shared by the initial start and by live "apply".
+    /// </summary>
+    private static ResolvedSpec? Resolve(MonitorInfo monitor)
     {
         var type = _config.Type;
         var path = _config.WallpaperPath;
@@ -437,7 +465,7 @@ internal static class Program
             if (!perMonitor.Enabled)
             {
                 _log($"[{monitor.Device}] disabled by config");
-                return;
+                return null;
             }
             if (!string.IsNullOrWhiteSpace(perMonitor.Type)) type = perMonitor.Type;
             if (!string.IsNullOrWhiteSpace(perMonitor.WallpaperPath)) path = perMonitor.WallpaperPath;
@@ -465,19 +493,136 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(path))
         {
             _log($"[{monitor.Device}] no wallpaper path configured");
-            return;
+            return null;
         }
 
-        _fallback?.Restore(monitor);
-        var session = new ChildSession(monitor, type, path, secondPath, childExe, fps,
-            fit, zoom, renderScale, brightness, contrast, highlights, hue,
-            temperature, exposure, sharpness, _job, _log);
+        return new ResolvedSpec(type, path, secondPath, childExe, fps, fit, zoom,
+            renderScale, volume, speed, shaderIntensity, brightness, contrast,
+            highlights, hue, temperature, exposure, sharpness);
+    }
+
+    private static ChildSession CreateSession(MonitorInfo monitor, ResolvedSpec spec)
+    {
+        var session = new ChildSession(monitor, spec.Type, spec.Path, spec.SecondPath,
+            spec.ChildExe, spec.Fps, spec.Fit, spec.Zoom, spec.RenderScale,
+            spec.Brightness, spec.Contrast, spec.Highlights, spec.Hue,
+            spec.Temperature, spec.Exposure, spec.Sharpness, _job, _log);
         session.UnexpectedExit += OnUnexpectedExit;
+        return session;
+    }
+
+    private static void ApplyProperties(ChildSession session, ResolvedSpec spec)
+    {
+        session.SetProperty("volume", spec.Volume);
+        session.SetProperty("speed", spec.Speed);
+        session.SetProperty("shader", spec.ShaderIntensity);
+    }
+
+    private static void AddMonitor(MonitorInfo monitor)
+    {
+        var spec = Resolve(monitor);
+        if (spec is null)
+            return;
+
+        _fallback?.Restore(monitor);
+        var session = CreateSession(monitor, spec);
         Sessions[monitor.Device] = session;
         session.Start();
-        session.SetProperty("volume", volume);
-        session.SetProperty("speed", speed);
-        session.SetProperty("shader", shaderIntensity);
+        ApplyProperties(session, spec);
+    }
+
+    /// <summary>
+    /// Live wallpaper swap without an exposed desktop: build the replacement
+    /// renderer hidden, wait until it reports its first frame on screen, then
+    /// tear the previous one down. The old window stays visible during the
+    /// whole preload, so a switch never shows the wallpaper behind it.
+    /// </summary>
+    private static void ApplyMonitor(string device)
+    {
+        try
+        {
+            var target = _monitors.Monitors.FirstOrDefault(m =>
+                string.Equals(m.Device, device, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrEmpty(target.Device))
+            {
+                _log($"apply-failed device={device} reason=unknown-monitor");
+                return;
+            }
+
+            SchedulerConfig fresh;
+            try
+            {
+                fresh = SchedulerConfig.Load(_configPath);
+            }
+            catch (Exception ex)
+            {
+                _log($"apply-failed device={device} reason=config:{ex.Message}");
+                return;
+            }
+            if (!fresh.Monitors.TryGetValue(device, out var perMonitor))
+            {
+                _log($"apply-failed device={device} reason=no-monitor-entry");
+                return;
+            }
+            _config.Monitors[device] = perMonitor;
+
+            var spec = Resolve(target);
+            if (spec is null)
+            {
+                _log($"apply-failed device={device} reason=unresolved-spec");
+                return;
+            }
+
+            Sessions.TryGetValue(device, out var previous);
+            var next = CreateSession(target, spec);
+            var done = new ManualResetEventSlim(false);
+            var shown = false;
+            next.Shown += _ =>
+            {
+                shown = true;
+                done.Set();
+            };
+            next.UnexpectedExit += _ => done.Set();
+
+            _log($"[{device}] apply: preloading {spec.Type} {Path.GetFileName(spec.Path)}");
+            next.Start();
+            ApplyProperties(next, spec);
+
+            if (!done.Wait(PreloadTimeoutMs))
+            {
+                _log($"apply-failed device={device} reason=preload-timeout");
+                next.UnexpectedExit -= OnUnexpectedExit;
+                next.Dispose();
+                return;
+            }
+            if (!shown)
+            {
+                _log($"apply-failed device={device} reason=preload-exit");
+                next.UnexpectedExit -= OnUnexpectedExit;
+                next.Dispose();
+                return;
+            }
+
+            // Promote: the new renderer is already on top of the old one.
+            Sessions[device] = next;
+            if (previous is not null)
+            {
+                previous.UnexpectedExit -= OnUnexpectedExit;
+                // Intentional stop: the swap is not a crash and must not feed
+                // the watchdog restart counter.
+                previous.Stop(intentional: true);
+                previous.Dispose();
+            }
+            if (_state == HostState.Paused)
+                next.Pause();
+            if (FullscreenMonitors.Contains(device))
+                ApplyFullscreen(device);
+            _log($"apply-applied device={device} type={next.WallpaperType} pid={next.Pid}");
+        }
+        catch (Exception ex)
+        {
+            _log($"apply-failed device={device} reason={ex.Message}");
+        }
     }
 
     private static void PollMonitors()

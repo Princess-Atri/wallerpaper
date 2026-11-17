@@ -29,6 +29,7 @@ internal sealed class ChildSession : IDisposable
     private bool _intentionalStop;
     private bool _pauseRequested;
     private bool _ready;
+    private volatile bool _shown;
     private DateTime _startedAt;
     private DateTime _lastExitAt;
     private int _restartCount;
@@ -89,6 +90,10 @@ internal sealed class ChildSession : IDisposable
     }
 
     public event Action<ChildSession>? UnexpectedExit;
+    /// <summary>Raised once the renderer reports that its window is on screen.</summary>
+    public event Action<ChildSession>? Shown;
+
+    public bool IsShown => Volatile.Read(ref _shown);
 
     public void Start()
     {
@@ -108,6 +113,7 @@ internal sealed class ChildSession : IDisposable
             _intentionalStop = false;
             _pauseRequested = false;
             _ready = false;
+            _shown = false;
             var psi = new ProcessStartInfo
             {
                 FileName = ChildExe,
@@ -297,13 +303,16 @@ internal sealed class ChildSession : IDisposable
         Process? p;
         lock (_gate)
         {
-            _intentionalStop = intentional;
             p = _process;
             if (p is null)
             {
+                // Already stopped: leave _intentionalStop alone so a pending
+                // Exited callback still sees the original reason instead of
+                // reporting a clean swap as a crash.
                 State = ChildState.Stopped;
                 return;
             }
+            _intentionalStop = intentional;
         }
 
         try
@@ -433,6 +442,16 @@ internal sealed class ChildSession : IDisposable
                     {
                         State = ChildState.Running;
                         _log($"[{Monitor.Device}] ready pid={Pid}");
+                    }
+                    break;
+                case "shown":
+                    // The renderer is actually on screen. Only now may a
+                    // preloaded replacement take over from this session.
+                    if (!_shown)
+                    {
+                        _shown = true;
+                        _log($"[{Monitor.Device}] shown pid={Pid}");
+                        Shown?.Invoke(this);
                     }
                     break;
                 case "paused":
