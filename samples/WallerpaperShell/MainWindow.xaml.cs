@@ -94,6 +94,7 @@ public sealed partial class MainWindow : Window
 	private bool _sceneQualityUi;
 
 	private CancellationTokenSource? _fpsProbeCts;
+	private bool _uiReady = true;
 
 	public MainWindow(bool startMinimized = false)
 	{
@@ -151,6 +152,7 @@ public sealed partial class MainWindow : Window
 		}
 		SettingsViewControl.Configure(_config, _catalog, _thumbnails);
 		SettingsViewControl.Saved += Settings_Saved;
+		SettingsViewControl.LogViewerRequested += async (_, _) => await ShowLogViewerAsync();
 		SuperResolutionViewControl.LibraryChanged += async (_, _) =>
 		{
 			await RefreshCatalogAsync();
@@ -170,19 +172,86 @@ public sealed partial class MainWindow : Window
 		AppWindow.Closing += OnClosing;
 		Closed += OnClosed;
 		Nav.SelectedItem = Nav.MenuItems[0];
-		RefreshCatalogAsync();
 		if (startMinimized || _config.General.StartMinimized)
 		{
+			// Autostart path: the desktop only needs the host running. The
+			// catalog scan is deferred until the user opens the window so
+			// logon is not delayed by scanning every library folder.
+			SplashOverlay.Visibility = Visibility.Collapsed;
+			_uiReady = false;
+			// Hide before activation completes: a logon must never paint the
+			// manager window on the desktop, not even for a single frame.
+			AppWindow.Hide();
 			DispatcherQueue.TryEnqueue(HideToTray);
+			// The desktop image is what the user sees until the renderer is
+			// attached; keep it on the wallpaper that is about to play.
+			UpdateDesktopFrameForCurrentWallpaper();
 			return;
 		}
+		_uiReady = true;
+		RefreshCatalogAsync();
 		DispatcherQueue.TryEnqueue(() =>
 		{
 			if (_config.Host.AutoStartHost && _catalog.Items.Count > 0)
 			{
 				_host.Start();
+				UpdateDesktopFrameForCurrentWallpaper();
 			}
 		});
+		DispatcherQueue.TryEnqueue(HideSplashWhenReady);
+		// Prune regenerable derivatives in the background; startup never waits
+		// for it and library/recycle references are preserved.
+		_ = Task.Run(() =>
+		{
+			try
+			{
+				if (_config.Cache.AutoCleanDays > 0)
+				{
+					var result = CacheCleanupService.Cleanup(_config, _config.Cache.AutoCleanDays);
+					if (result.DeletedFiles > 0)
+						AppLog.Info($"cache cleanup: {result.DeletedFiles} files, " +
+						            $"{result.FreedBytes / 1048576.0:F0} MB freed");
+				}
+			}
+			catch (Exception ex)
+			{
+				AppLog.Error("cache cleanup failed", ex);
+			}
+		});
+		// Diagnostics: WALLERPAPER_LOCKSCREEN_TEST applies the current monitor
+		// wallpaper to the lock screen once at startup.
+		if (!string.IsNullOrWhiteSpace(
+			    Environment.GetEnvironmentVariable("WALLERPAPER_LOCKSCREEN_TEST")))
+		{
+			DispatcherQueue.TryEnqueue(async () =>
+			{
+				try
+				{
+					foreach (var assignment in _config.Monitors.Values)
+					{
+						var current = _catalog.Find(assignment.WallpaperId);
+						if (current is not null)
+						{
+							await ApplyLockScreenAsync(current);
+							break;
+						}
+					}
+				}
+				catch (Exception ex)
+				{
+					AppLog.Error("lockscreen test failed", ex);
+				}
+			});
+		}
+	}
+
+	private async void HideSplashWhenReady()
+	{
+		if (SplashOverlay.Visibility != Visibility.Visible)
+			return;
+		// Let the splash render before catalog/thumbnail work starts.
+		await Task.Delay(1200);
+		SplashOverlay.Visibility = Visibility.Collapsed;
 	}
 
 	private TrayIcon? TryCreateTray()
@@ -251,6 +320,7 @@ public sealed partial class MainWindow : Window
 		if (_config.Host.AutoStartHost && _catalog.Items.Count > 0 && !_host.IsRunning)
 		{
 			_host.Start();
+			UpdateDesktopFrameForCurrentWallpaper();
 		}
 	}
 
@@ -1219,7 +1289,8 @@ public sealed partial class MainWindow : Window
 			else if (pauseAfterDelete)
 			{
 				_host.Stop();
-				DesktopWallpaperService.Restore();
+				if (DesktopWallpaperService.Restore())
+					DesktopFirstFrameService.ClearFrames();
 			}
 			else if (_host.IsRunning)
 			{
@@ -3623,12 +3694,14 @@ public sealed partial class MainWindow : Window
 			await Task.Delay(120);
 			try
 			{
+				var eta = new ProgressEta();
 				QueueRenderResult queueRenderResult = await new QueueRenderService().RenderAsync(new PlaylistEntry[1] { entry }, (int percent, string message) =>
 				{
+					var line = eta.Format(percent, message);
 					DispatcherQueue.TryEnqueue(() =>
 					{
 						bar.Value = Math.Clamp(percent, 0, 100);
-						status.Text = message;
+						status.Text = line;
 					});
 				}, cts.Token);
 				progressDialog.Hide();
@@ -3797,12 +3870,14 @@ public sealed partial class MainWindow : Window
 			await Task.Delay(120);
 			try
 			{
+				var eta = new ProgressEta();
 				SuperResolutionResult superResolutionResult = await service.UpscaleAsync(item.Path, sourceFps, factor, model, (int percent, string message) =>
 				{
+					var line = eta.Format(percent, message);
 					DispatcherQueue.TryEnqueue(() =>
 					{
 						bar.Value = Math.Clamp(percent, 0, 100);
-						status.Text = message;
+						status.Text = line;
 					});
 				}, cts.Token);
 				progressDialog.Hide();
@@ -4216,128 +4291,512 @@ public sealed partial class MainWindow : Window
 		SelectCategory("Video");
 	}
 
+	private async Task ShowLogViewerAsync()
+	{
+		var logDir = Wallerpaper.Diagnostics.AppLog.Directory;
+		var list = new ListView
+		{
+			SelectionMode = ListViewSelectionMode.Single,
+			Height = 150
+		};
+		var output = new TextBox
+		{
+			IsReadOnly = true,
+			AcceptsReturn = true,
+			TextWrapping = TextWrapping.NoWrap,
+			FontFamily = new FontFamily("Consolas"),
+			FontSize = 11,
+			Height = 340
+		};
+		var outputScroller = new ScrollViewer
+		{
+			Content = output,
+			Height = 340,
+			HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+			HorizontalScrollMode = ScrollMode.Enabled,
+			VerticalScrollMode = ScrollMode.Enabled
+		};
+		var filterBox = new TextBox
+		{
+			PlaceholderText = "过滤关键词，例如 error 或 display1",
+			HorizontalAlignment = HorizontalAlignment.Stretch
+		};
+		string[] files = Array.Empty<string>();
+		if (Directory.Exists(logDir))
+		{
+			files = Directory.GetFiles(logDir, "*.log*")
+				.OrderByDescending(x => File.GetLastWriteTime(x))
+				.Take(40)
+				.ToArray();
+		}
+		foreach (var file in files)
+			list.Items.Add(Path.GetFileName(file));
+
+		void LoadSelected()
+		{
+			if (list.SelectedItem is not string name) return;
+			var path = Path.Combine(logDir, name);
+			try
+			{
+				var filter = filterBox.Text?.Trim() ?? "";
+				var lines = File.ReadLines(path).TakeLast(4000);
+				if (filter.Length > 0)
+					lines = lines.Where(x =>
+						x.Contains(filter, StringComparison.OrdinalIgnoreCase));
+				output.Text = string.Join(Environment.NewLine, lines);
+			}
+			catch (Exception ex)
+			{
+				output.Text = "读取失败：" + ex.Message;
+			}
+		}
+		list.SelectionChanged += (_, _) => LoadSelected();
+		filterBox.TextChanged += (_, _) => LoadSelected();
+		if (files.Length > 0) list.SelectedIndex = 0;
+
+		var dialog = new ContentDialog
+		{
+			Title = "日志查看器",
+			Content = new StackPanel
+			{
+				Spacing = 10,
+				Width = 780,
+				Children =
+				{
+					(UIElement)new TextBlock
+					{
+						Text = logDir,
+						FontSize = 11,
+						TextWrapping = TextWrapping.Wrap,
+						Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+					},
+					(UIElement)filterBox,
+					(UIElement)list,
+					(UIElement)outputScroller
+				}
+			},
+			CloseButtonText = "关闭",
+			XamlRoot = Content.XamlRoot
+		};
+		if (files.Length == 0)
+			output.Text = "还没有日志文件。";
+		await dialog.ShowAsync();
+	}
+
 	private async Task ShowRecycleBinAsync()
 	{
 		var entries = RecycleBinService.Load();
-		var list = new StackPanel { Spacing = 8 };
+		var cards = new List<WallpaperItem>();
+		var grid = new GridView
+		{
+			SelectionMode = ListViewSelectionMode.Single,
+			IsItemClickEnabled = false,
+			MaxHeight = 520,
+			ItemTemplate = (DataTemplate)Root.Resources["RecycleCardTemplate"],
+			// Force a three-column 九宫格 panel: the recycle dialog is narrower
+			// than the library page, so the shared wrap panel only fits two.
+			ItemsPanel = (ItemsPanelTemplate)XamlReader.Load(
+				"<ItemsPanelTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'>" +
+				"<ItemsWrapGrid Orientation='Horizontal' MaximumRowsOrColumns='3' ItemWidth='172' ItemHeight='116'/>" +
+				"</ItemsPanelTemplate>")
+		};
+		var restoreButton = new Button { Content = "恢复选中", Padding = new Thickness(16, 6, 16, 6) };
+		var deleteButton = new Button { Content = "永久删除选中", Padding = new Thickness(16, 6, 16, 6) };
+		var deleteAll = new Button { Content = "删除全部", Padding = new Thickness(16, 6, 16, 6) };
+		TextBlock emptyHint = new()
+		{
+			Text = "回收站是空的。删除的壁纸会保存在这里。",
+			TextWrapping = TextWrapping.Wrap,
+			Visibility = Visibility.Collapsed
+		};
 		var dialog = new ContentDialog
 		{
 			Title = $"回收站（{entries.Count}）",
 			CloseButtonText = "关闭",
-			XamlRoot = Content.XamlRoot
+			XamlRoot = Content.XamlRoot,
+			Content = new StackPanel
+			{
+				Spacing = 12,
+				Width = 556,
+				Children =
+				{
+					(UIElement)new TextBlock
+					{
+						Text = "单击选中一个壁纸，再点下方按钮恢复或永久删除。",
+						FontSize = 12,
+						TextWrapping = TextWrapping.Wrap,
+						Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+					},
+					(UIElement)new StackPanel
+					{
+						Orientation = Orientation.Horizontal,
+						Spacing = 8,
+						Children =
+						{
+							(UIElement)restoreButton,
+							(UIElement)deleteButton,
+							(UIElement)deleteAll
+						}
+					},
+					(UIElement)emptyHint,
+					(UIElement)new ScrollViewer
+					{
+						Content = grid,
+						Height = 460,
+						VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+					}
+				}
+			}
 		};
 
-		void Rebuild()
+		async Task RefreshAsync()
 		{
-			list.Children.Clear();
 			entries = RecycleBinService.Load();
 			dialog.Title = $"回收站（{entries.Count}）";
-			if (entries.Count == 0)
+			cards = entries.Select(e => new WallpaperItem
 			{
-				list.Children.Add(new TextBlock
-				{
-					Text = "回收站是空的。删除的壁纸会保存在这里。",
-					TextWrapping = TextWrapping.Wrap
-				});
-				return;
-			}
-
-			foreach (var entry in entries)
-			{
-				var row = new Grid { ColumnSpacing = 10 };
-				row.ColumnDefinitions.Add(new ColumnDefinition
-                {
-                    Width = new GridLength(1, GridUnitType.Star)
-                });
-				row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-				row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-				row.Children.Add(new StackPanel
-				{
-					Spacing = 2,
-					Children =
-					{
-						(UIElement)new TextBlock
-						{
-							Text = entry.Title,
-							FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-							TextTrimming = TextTrimming.CharacterEllipsis
-						},
-						(UIElement)new TextBlock
-						{
-							Text = $"{entry.Kind} · {entry.DeletedAt}",
-							FontSize = 11,
-							Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
-						}
-					}
-				});
-				var restore = new Button { Content = "恢复", Padding = new Thickness(14, 5, 14, 5) };
-				restore.Click += async (_, _) =>
-				{
-					try
-					{
-						var item = RecycleBinService.Restore(entry);
-						_config.Wallpapers.Add(item);
-						TitleOverrideStore.Set(item.Path, item.Title, item.Kind);
-						ConfigStore.Save(_config);
-						await RefreshCatalogAsync();
-						ApplyFilter();
-						RevealWallpaper(item.Path);
-						Rebuild();
-						SetStatus("已恢复：" + item.Title);
-					}
-					catch (Exception ex)
-					{
-						SetStatus("恢复失败：" + ex.Message);
-					}
-				};
-				Grid.SetColumn(restore, 1);
-				row.Children.Add(restore);
-				var delete = new Button { Content = "永久删除", Padding = new Thickness(14, 5, 14, 5) };
-				delete.Click += (_, _) =>
-				{
-					RecycleBinService.Delete(entry);
-					Rebuild();
-				};
-				Grid.SetColumn(delete, 2);
-				row.Children.Add(delete);
-				list.Children.Add(new Border
-				{
-					Padding = new Thickness(12, 8, 12, 8),
-					CornerRadius = new CornerRadius(8),
-					Background = (Brush)Application.Current.Resources["LayerFillColorDefaultBrush"],
-					Child = row
-				});
-			}
+				Id = e.Id,
+				Title = e.Title,
+				Kind = Enum.TryParse<WallpaperKind>(e.Kind, true, out var k)
+					? k : WallpaperKind.Video
+			}).ToList();
+			grid.ItemsSource = null;
+			grid.ItemsSource = cards;
+			emptyHint.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+			restoreButton.IsEnabled = deleteButton.IsEnabled = deleteAll.IsEnabled = entries.Count > 0;
+			await LoadRecycleThumbnailsAsync(entries, cards);
 		}
-		Rebuild();
 
-		var deleteAll = new Button
+		restoreButton.Click += async (_, _) =>
 		{
-			Content = "删除全部",
-			HorizontalAlignment = HorizontalAlignment.Left,
-			Padding = new Thickness(16, 6, 16, 6)
+			if (grid.SelectedItem is not WallpaperItem card) return;
+			var entry = entries.FirstOrDefault(e => e.Id == card.Id);
+			if (entry is null) return;
+			restoreButton.IsEnabled = false;
+			try
+			{
+				var restored = RecycleBinService.Restore(entry);
+				if (!_config.Wallpapers.Any(x =>
+					    string.Equals(x.Path, restored.Path, StringComparison.OrdinalIgnoreCase)))
+					_config.Wallpapers.Add(restored);
+				TitleOverrideStore.Set(restored.Path, restored.Title, restored.Kind);
+				ConfigStore.Save(_config);
+				await RefreshCatalogAsync();
+				ApplyFilter();
+				RevealWallpaper(restored.Path);
+				await RefreshAsync();
+				SetStatus("已恢复：" + restored.Title);
+			}
+			catch (Exception ex)
+			{
+				await new ContentDialog
+				{
+					Title = "恢复失败",
+					Content = card.Title + Environment.NewLine + Environment.NewLine + ex.Message,
+					CloseButtonText = "知道了",
+					XamlRoot = Content.XamlRoot
+				}.ShowAsync();
+				SetStatus("恢复失败：" + ex.Message);
+				restoreButton.IsEnabled = true;
+			}
 		};
-		deleteAll.Click += (_, _) =>
+
+		deleteButton.Click += async (_, _) =>
+		{
+			if (grid.SelectedItem is not WallpaperItem card) return;
+			var entry = entries.FirstOrDefault(e => e.Id == card.Id);
+			if (entry is null) return;
+			RecycleBinService.Delete(entry);
+			await RefreshAsync();
+		};
+
+		deleteAll.Click += async (_, _) =>
 		{
 			RecycleBinService.Clear();
-			Rebuild();
+			await RefreshAsync();
 		};
-		dialog.Content = new StackPanel
-		{
-			Spacing = 12,
-			Children =
-			{
-				(UIElement)new ScrollViewer
-				{
-					Content = list,
-					MaxHeight = 420,
-					VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-				},
-				(UIElement)deleteAll
-			}
-		};
+
+		await RefreshAsync();
 		await dialog.ShowAsync();
 		SelectCategory("Video");
+	}
+
+	private async Task LoadRecycleThumbnailsAsync(
+		IReadOnlyList<RecycleEntry> entries, IReadOnlyList<WallpaperItem> cards)
+	{
+		var map = entries.ToDictionary(e => e.Id, e => e, StringComparer.Ordinal);
+		foreach (var card in cards)
+		{
+			if (!map.TryGetValue(card.Id, out var entry)) continue;
+			var video = entry.StoredPaths.FirstOrDefault(p =>
+				p.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
+				p.EndsWith(".webm", StringComparison.OrdinalIgnoreCase) ||
+				p.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase) ||
+				p.EndsWith(".mov", StringComparison.OrdinalIgnoreCase));
+			var image = entry.StoredPaths.FirstOrDefault(p =>
+				p.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+				p.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+				p.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+				p.EndsWith(".webp", StringComparison.OrdinalIgnoreCase));
+			var source = image ?? video;
+			if (source is null || !File.Exists(source)) continue;
+
+			var thumb = Path.Combine(AppStorage.CachePath("recycle-thumbs"),
+				$"{card.Id}.png");
+			if (!File.Exists(thumb))
+			{
+				var ok = await Task.Run(() =>
+				{
+					if (image is not null) return TryImageThumb(image, thumb);
+					// Videos: grab a frame with FFmpeg; Windows shell thumbs
+					// return black for many of these copied files.
+					return TryVideoThumb(video!, thumb);
+				});
+				if (!ok) continue;
+			}
+			try
+			{
+				card.Thumbnail = new BitmapImage(new Uri(thumb));
+			}
+			catch { }
+		}
+	}
+
+	private static bool TryImageThumb(string source, string target)
+	{
+		try
+		{
+			using var src = System.Drawing.Image.FromFile(source);
+			using var bmp = new System.Drawing.Bitmap(480, 270);
+			using var g = System.Drawing.Graphics.FromImage(bmp);
+			g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+			var scale = Math.Max(480.0 / src.Width, 270.0 / src.Height);
+			var w = (int)(src.Width * scale);
+			var h = (int)(src.Height * scale);
+			g.DrawImage(src, (480 - w) / 2, (270 - h) / 2, w, h);
+			Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+			bmp.Save(target, System.Drawing.Imaging.ImageFormat.Png);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool TryVideoThumb(string source, string target)
+	{
+		// Try several timestamps: cropped wallpapers often start on a black
+		// frame, and the first non-black frame gives a usable preview.
+		foreach (var seek in new[] { "00:00:02", "00:00:01", "00:00:00.5" })
+		{
+			if (TryVideoFrameAt(source, target, seek) && IsBrightEnough(target))
+				return true;
+		}
+		return File.Exists(target);
+	}
+
+	private static bool IsBrightEnough(string png)
+	{
+		try
+		{
+			using var bmp = new System.Drawing.Bitmap(png);
+			var rect = new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height);
+			var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+				System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+			try
+			{
+				var bytes = Math.Abs(data.Stride) * bmp.Height;
+				var buffer = new byte[bytes];
+				System.Runtime.InteropServices.Marshal.Copy(data.Scan0, buffer, 0, bytes);
+				long sum = 0;
+				for (var i = 0; i < bytes; i += 3)
+					sum += Math.Max(buffer[i], Math.Max(buffer[i + 1], buffer[i + 2]));
+				return (double)sum / (bytes / 3.0) > 12;
+			}
+			finally
+			{
+				bmp.UnlockBits(data);
+			}
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static bool TryVideoFrameAt(string source, string target, string seek)
+	{
+		try
+		{
+			var ffmpeg = AiInterpolationService.FindFfmpegFrames();
+			if (string.IsNullOrWhiteSpace(ffmpeg) || !File.Exists(ffmpeg)) return false;
+			Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+			var psi = new System.Diagnostics.ProcessStartInfo
+			{
+				FileName = ffmpeg,
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			foreach (var arg in new[]
+			         {
+				         "-y", "-hide_banner", "-loglevel", "error",
+				         "-ss", seek, "-i", source,
+				         "-frames:v", "1", "-vf",
+				         "scale=480:270:force_original_aspect_ratio=increase,crop=480:270",
+				         target
+			         })
+				psi.ArgumentList.Add(arg);
+			using var p = System.Diagnostics.Process.Start(psi);
+			if (p is null) return false;
+			if (!p.WaitForExit(8000))
+			{
+				try { p.Kill(true); } catch { }
+				return false;
+			}
+			return p.ExitCode == 0 && File.Exists(target) &&
+			       new FileInfo(target).Length > 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private async Task ShowSceneEditorAsync(WallpaperItem item)
+	{
+		if (item.Kind != WallpaperKind.Scene || !File.Exists(item.Path)) return;
+		var doc = SceneDocument.Load(item.Path);
+		var layerList = new ListView { Height = 200, SelectionMode = ListViewSelectionMode.Single };
+		foreach (var layer in doc.Layers)
+			layerList.Items.Add($"{layer.Name}  ·  {layer.Type}");
+
+		var posX = new Slider { Minimum = 0, Maximum = 1, StepFrequency = 0.01, Header = "位置 X" };
+		var posY = new Slider { Minimum = 0, Maximum = 1, StepFrequency = 0.01, Header = "位置 Y" };
+		var scale = new Slider { Minimum = 0.1, Maximum = 4, StepFrequency = 0.05, Header = "缩放" };
+		var rot = new Slider { Minimum = -180, Maximum = 180, StepFrequency = 1, Header = "旋转" };
+		var opacity = new Slider { Minimum = 0, Maximum = 1, StepFrequency = 0.01, Header = "不透明度" };
+		var count = new NumberBox { Header = "粒子数量", Minimum = 0, Maximum = 20000, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+		var color = new TextBox { Header = "颜色（#RRGGBB）" };
+		var imagePath = new TextBox { Header = "图片路径" };
+		var editor = new StackPanel { Spacing = 8 };
+		editor.Children.Add((UIElement)posX);
+		editor.Children.Add((UIElement)posY);
+		editor.Children.Add((UIElement)scale);
+		editor.Children.Add((UIElement)rot);
+		editor.Children.Add((UIElement)opacity);
+		editor.Children.Add((UIElement)count);
+		editor.Children.Add((UIElement)color);
+		editor.Children.Add((UIElement)imagePath);
+
+		var loading = true;
+		SceneDocument.Layer? Current() =>
+			layerList.SelectedIndex >= 0 && layerList.SelectedIndex < doc.Layers.Count
+				? doc.Layers[layerList.SelectedIndex]
+				: null;
+		void PushToLayer()
+		{
+			var layer = Current();
+			if (layer is null || loading) return;
+			layer.PosX = posX.Value;
+			layer.PosY = posY.Value;
+			layer.ScaleX = layer.ScaleY = scale.Value;
+			layer.Rotation = rot.Value;
+			layer.Opacity = opacity.Value;
+			layer.Count = (int)count.Value;
+			layer.ColorHex = color.Text?.Trim() ?? layer.ColorHex;
+			layer.Image = imagePath.Text?.Trim() ?? layer.Image;
+		}
+		void PullFromLayer()
+		{
+			var layer = Current();
+			if (layer is null) return;
+			loading = true;
+			posX.Value = layer.PosX;
+			posY.Value = layer.PosY;
+			scale.Value = Math.Clamp(layer.ScaleX, 0.1, 4);
+			rot.Value = Math.Clamp(layer.Rotation, -180, 180);
+			opacity.Value = layer.Opacity;
+			count.Value = layer.Count;
+			color.Text = layer.ColorHex;
+			imagePath.Text = layer.Image;
+			loading = false;
+		}
+		layerList.SelectionChanged += (_, _) => PullFromLayer();
+		foreach (var slider in new[] { posX, posY, scale, rot, opacity })
+			slider.ValueChanged += (_, _) => PushToLayer();
+		count.ValueChanged += (_, _) => PushToLayer();
+		color.TextChanged += (_, _) => PushToLayer();
+		imagePath.TextChanged += (_, _) => PushToLayer();
+
+		var content = new Grid
+		{
+			ColumnSpacing = 16,
+			Width = 820,
+			ColumnDefinitions =
+			{
+				new ColumnDefinition { Width = new GridLength(280) },
+				new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }
+			}
+		};
+		content.Children.Add(layerList);
+		Grid.SetColumn(editor, 1);
+		content.Children.Add(editor);
+
+		var dialog = new ContentDialog
+		{
+			Title = "场景图层编辑",
+			Content = new ScrollViewer { Content = content, MaxHeight = 560 },
+			PrimaryButtonText = "保存为新场景",
+			CloseButtonText = "取消",
+			DefaultButton = ContentDialogButton.Primary,
+			XamlRoot = Content.XamlRoot
+		};
+		dialog.PrimaryButtonClick += (_, _) =>
+		{
+			PushToLayer();
+		};
+		if (doc.Layers.Count > 0) layerList.SelectedIndex = 0;
+		if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+		try
+		{
+			var copyPath = SceneDocument.CreateWorkingCopy(item.Path, doc.Name);
+			doc.Path = copyPath;
+			SceneDocument.Save(doc);
+			_addedPath = copyPath;
+		}
+		catch (Exception ex)
+		{
+			SetStatus("保存场景失败：" + ex.Message);
+			return;
+		}
+		try
+		{
+			var scenePath = _addedPath!;
+			AddLibraryRoot(scenePath, WallpaperKind.Scene, recursive: false);
+			ConfigStore.Save(_config);
+			await RefreshCatalogAsync();
+			ApplyFilter();
+			RevealWallpaper(scenePath);
+			SetStatus("已保存场景编辑：" + scenePath);
+		}
+		catch (Exception ex)
+		{
+			SetStatus("加入场景库失败：" + ex.Message);
+		}
+	}
+
+	private string? _addedPath;
+
+	private async void EditSceneLayers_Click(object sender, RoutedEventArgs e)
+	{
+		var item = _selected;
+		if (item is { Kind: WallpaperKind.Scene })
+			await ShowSceneEditorAsync(item);
 	}
 
 	private async void StaticAdjust_Click(object sender, RoutedEventArgs e)
@@ -4878,7 +5337,8 @@ public sealed partial class MainWindow : Window
 			else if (pauseAfterDelete)
 			{
 				_host.Stop();
-				DesktopWallpaperService.Restore();
+				if (DesktopWallpaperService.Restore())
+					DesktopFirstFrameService.ClearFrames();
 			}
 			else if (_host.IsRunning)
 			{
@@ -4990,12 +5450,14 @@ public sealed partial class MainWindow : Window
 			await Task.Delay(120);
 			try
 			{
+				var eta = new ProgressEta();
 				AiInterpolationResult result = await service.InterpolateAsync(item.Path, sourceFps, factor, (int percent, string message) =>
 				{
+					var line = eta.Format(percent, message);
 					DispatcherQueue.TryEnqueue(() =>
 					{
 						progressBar.Value = Math.Clamp(percent, 0, 100);
-						status.Text = message;
+						status.Text = line;
 					});
 				}, cts.Token);
 				progressDialog.Hide();
@@ -5104,7 +5566,7 @@ public sealed partial class MainWindow : Window
 		ApplySelectedToTarget();
 	}
 
-	private void ApplySelectedToTarget()
+	private async void ApplySelectedToTarget()
 	{
 		WallpaperItem wallpaperItem = CurrentWallpaper();
 		if (wallpaperItem != null && TargetMonitorCombo.SelectedIndex >= 0 && TargetMonitorCombo.SelectedIndex < _monitors.Count)
@@ -5144,19 +5606,94 @@ public sealed partial class MainWindow : Window
 					imagePath = wallpaperItem.Path;
 				}
 				var applied = DesktopWallpaperService.SetImage(imagePath);
+				if (applied)
+					DesktopFirstFrameService.ClearFrames();
 				SetStatus((applied ? "已应用静态壁纸：" : "静态壁纸应用失败：") +
 				          wallpaperItem.Title);
 				return;
 			}
+			// Keep the real desktop image in sync before the renderer is
+			// rebuilt: the WorkerW layer is briefly removed while switching.
+			var frameTask = Task.Run(() => DesktopFirstFrameService.ApplyAsync(
+				wallpaperItem, monitorDisplay.Width, monitorDisplay.Height));
 			var canLiveSwitch = wallpaperItem.Kind == WallpaperKind.Video &&
 				!string.Equals(previousItem?.Path, wallpaperItem.Path, StringComparison.OrdinalIgnoreCase) &&
 				_host.IsRunning;
 			if (canLiveSwitch)
+			{
 				ScheduleFastSwitch(monitorDisplay.Device, wallpaperItem.Path);
+			}
 			else
+			{
+				// The renderer is re-created, so the desktop is exposed for a
+				// moment. Waiting for the new frame (capped so a slow disk
+				// cannot stall the switch) keeps that gap showing the new
+				// wallpaper instead of the previous one.
+				try
+				{
+					await Task.WhenAny(frameTask, Task.Delay(400));
+				}
+				catch { }
 				_host.Restart();
+			}
 			SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
+			DispatcherQueue.TryEnqueue(async () =>
+			{
+				try
+				{
+					await ApplyLockScreenAsync(wallpaperItem);
+				}
+				catch (Exception ex)
+				{
+					AppLog.Error("lock screen apply failed", ex);
+					SetStatus("锁屏壁纸设置失败：" + ex.Message);
+				}
+			});
 		}
+	}
+
+	/// <summary>
+	/// Rebuilds the desktop image from whatever is assigned right now. Used on
+	/// startup/resume so the frame behind the renderer matches the wallpaper
+	/// the previous session left playing.
+	/// </summary>
+	private void UpdateDesktopFrameForCurrentWallpaper()
+	{
+		try
+		{
+			var assignment = _config.Monitors
+				.Select(x => (Device: x.Key, Item: _catalog.Find(x.Value.WallpaperId)))
+				.FirstOrDefault(x => x.Item is { Kind: not WallpaperKind.Static });
+			var item = assignment.Item;
+			if (item is null)
+			{
+				DesktopFirstFrameService.ClearFrames();
+				return;
+			}
+			var monitor = _monitors.FirstOrDefault(x =>
+				              string.Equals(x.Device, assignment.Device,
+					              StringComparison.OrdinalIgnoreCase))
+			              ?? _monitors.FirstOrDefault();
+			_ = Task.Run(() => DesktopFirstFrameService.ApplyAsync(
+				item, monitor?.Width ?? 0, monitor?.Height ?? 0));
+		}
+		catch { }
+	}
+
+	private async Task ApplyLockScreenAsync(WallpaperItem item)
+	{
+		if (!string.Equals(_config.General.LockScreenMode, "match",
+			    StringComparison.OrdinalIgnoreCase))
+		{
+			AppLog.Info($"lock screen skipped: mode={_config.General.LockScreenMode}");
+			return;
+		}
+		AppLog.Info($"lock screen applying for {item.Title} thumb={item.ThumbnailPath}");
+		var ok = await LockScreenService.SetImageAsync(item);
+		AppLog.Info($"lock screen result={ok}");
+		SetStatus(ok
+			? "已同步锁屏壁纸（锁屏仅支持静态图片）"
+			: "锁屏壁纸同步失败：当前壁纸没有可用图片");
 	}
 
 	private void ScheduleFastSwitch(string device, string path)
@@ -5236,10 +5773,88 @@ public sealed partial class MainWindow : Window
 		}
 	}
 
+	private async Task PreviewWithRendererAsync(WallpaperItem item)
+	{
+		var monitor = TargetMonitorCombo.SelectedIndex >= 0 &&
+		              TargetMonitorCombo.SelectedIndex < _monitors.Count
+			? _monitors[TargetMonitorCombo.SelectedIndex]
+			: _monitors.FirstOrDefault();
+		if (monitor is null)
+		{
+			SetStatus("没有可用的显示器");
+			return;
+		}
+
+		// The live scheduler must not fight the preview renderer for WorkerW.
+		var wasRunning = _host.IsRunning;
+		if (wasRunning) _host.Stop();
+		await Task.Delay(400);
+
+		var process = RendererPreviewService.Start(_config, item, monitor,
+			message => AppLog.Info(message));
+		if (process is null)
+		{
+			if (wasRunning) _host.Start();
+			SetStatus("渲染器不可用，无法真实预览");
+			return;
+		}
+
+		SetStatus($"正在真实渲染预览：{item.Title}（按 Esc 或点击结束）");
+		var stopRequested = new TaskCompletionSource<bool>();
+		var cts = new CancellationTokenSource();
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				while (!cts.IsCancellationRequested && !process.HasExited)
+				{
+					await Task.Delay(200, cts.Token);
+					// Esc / 左键点击结束预览
+					if ((GetAsyncKeyState(0x1B) & 0x8000) != 0 ||
+					    (GetAsyncKeyState(0x01) & 0x8000) != 0)
+					{
+						stopRequested.TrySetResult(true);
+						return;
+					}
+				}
+				stopRequested.TrySetResult(true);
+			}
+			catch (OperationCanceledException) { }
+			catch { stopRequested.TrySetResult(true); }
+		});
+
+		await stopRequested.Task;
+		cts.Cancel();
+		cts.Dispose();
+		RendererPreviewService.Stop();
+		await Task.Delay(300);
+		if (wasRunning) _host.Start();
+		SetStatus("预览已结束");
+	}
+
+	[DllImport("user32.dll")]
+	private static extern short GetAsyncKeyState(int vKey);
+
+	[System.Runtime.InteropServices.StructLayout(
+		System.Runtime.InteropServices.LayoutKind.Sequential)]
+	private struct LASTINPUTINFO
+	{
+		public uint cbSize;
+		public uint dwTime;
+	}
+
 	private async void Preview_Click(object sender, RoutedEventArgs e)
 	{
 		WallpaperItem? item = CurrentWallpaper();
 		if (item is null) return;
+
+		// Web/scene wallpapers render with a real renderer on the desktop so
+		// the preview matches the live output instead of a still thumbnail.
+		if (RendererPreviewService.IsSupported(item))
+		{
+			await PreviewWithRendererAsync(item);
+			return;
+		}
 
 		var hwnd = WindowNative.GetWindowHandle(this);
 		var screenshot = Path.Combine(Path.GetTempPath(),
@@ -5312,11 +5927,13 @@ public sealed partial class MainWindow : Window
 			// normal Windows desktop wallpaper back. PauseAll alone leaves the
 			// last decoded frame on screen.
 			_host.Stop();
-			DesktopWallpaperService.Restore();
+			if (DesktopWallpaperService.Restore())
+				DesktopFirstFrameService.ClearFrames();
 		}
 		else
 		{
 			_host.Start();
+			UpdateDesktopFrameForCurrentWallpaper();
 		}
 		PauseLabel.Text = (_paused ? "播放" : "暂停");
 		PauseIcon.Glyph = (_paused ? "\ue768" : "\ue769");
@@ -5367,10 +5984,21 @@ public sealed partial class MainWindow : Window
 
 	private void ShowFromTray()
 	{
-		DispatcherQueue.TryEnqueue(() =>
+		DispatcherQueue.TryEnqueue(async () =>
 		{
+			// Show the brand splash again on every restore from the tray.
+			// The app itself stays running; only the window is re-shown.
+			SplashOverlay.Visibility = Visibility.Visible;
 			AppWindow.Show();
 			Activate();
+			if (!_uiReady)
+			{
+				// Autostart skipped the catalog scan; do it now that the
+				// library UI is actually being shown.
+				_uiReady = true;
+				await RefreshCatalogAsync();
+			}
+			HideSplashWhenReady();
 		});
 	}
 

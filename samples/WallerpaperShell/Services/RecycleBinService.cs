@@ -93,29 +93,74 @@ public static class RecycleBinService
         {
             Id = string.IsNullOrWhiteSpace(entry.Id) ? Guid.NewGuid().ToString("N") : entry.Id,
             Title = entry.Title,
-            Kind = Enum.TryParse<WallpaperKind>(entry.Kind, true, out var kind)
-                ? kind : WallpaperKind.Video
+            Kind = Enum.TryParse<WallpaperKind>(entry.Kind, true, out var ok)
+                ? ok : WallpaperKind.Video
         };
 
+        // The cached item may predate a config migration (Videos moved from C:
+        // to D:). Re-point cache paths at the current managed root so restore
+        // never writes back into an old temp folder.
+        var currentRoot = ManagedLibraryService.Root;
+        var legacyCache = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Wallerpaper", "cache");
+        var itemPath = restored.Path ?? "";
+        if (itemPath.StartsWith(legacyCache, StringComparison.OrdinalIgnoreCase))
+            itemPath = Path.Combine(currentRoot, Path.GetFileName(itemPath));
+
+        var entryOriginals = entry.OriginalPaths;
         var restoredPaths = new List<string>();
         for (var i = 0; i < entry.StoredPaths.Count; i++)
         {
             var stored = entry.StoredPaths[i];
-            var original = i < entry.OriginalPaths.Count
-                ? entry.OriginalPaths[i]
-                : Path.Combine(Path.GetTempPath(), Path.GetFileName(stored));
+            var original = i < entryOriginals.Count
+                ? entryOriginals[i]
+                : Path.Combine(currentRoot, Path.GetFileName(stored));
+            // A cached original may point at a pruned temp folder. Fall back
+            // to the managed library for cache-file origins.
+            if (original.StartsWith(legacyCache, StringComparison.OrdinalIgnoreCase))
+                original = Path.Combine(currentRoot, Path.GetFileName(original));
+
             if (!File.Exists(stored))
             {
                 if (File.Exists(original)) restoredPaths.Add(original);
                 continue;
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(original)!);
-            File.Copy(stored, original, true);
-            restoredPaths.Add(original);
+
+            // Never overwrite a file that is already back in the library.
+            var target = original;
+            var suffix = 2;
+            while (File.Exists(target) &&
+                   new FileInfo(target).Length != new FileInfo(stored).Length)
+            {
+                var stem = Path.GetFileNameWithoutExtension(original);
+                target = Path.Combine(Path.GetDirectoryName(original)!,
+                    $"{stem}_restored_{suffix++}{Path.GetExtension(original)}");
+            }
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                if (!File.Exists(target))
+                    File.Copy(stored, target, true);
+                restoredPaths.Add(target);
+            }
+            catch
+            {
+                // Keep the entry so the user can retry instead of losing it.
+                if (File.Exists(original)) restoredPaths.Add(original);
+            }
         }
 
-        if (restoredPaths.Count > 0) restored.Path = restoredPaths[0];
+        if (restoredPaths.Count == 0)
+            throw new InvalidOperationException(
+                "回收站副本已不可用，无法恢复。请确认文件仍在磁盘上。");
+
+        restored.Path = restoredPaths[0];
         if (restoredPaths.Count > 1) restored.SecondPath = restoredPaths[1];
+        // A fresh id avoids colliding with a re-added wallpaper that already
+        // owns the old id (the catalog drops duplicates by id).
+        restored.Id = Guid.NewGuid().ToString("N");
         restored.Missing = false;
 
         lock (Gate)

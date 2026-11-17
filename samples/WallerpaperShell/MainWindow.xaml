@@ -39,6 +39,36 @@
                                                                                       />
                 </Grid>
             </DataTemplate>
+            <DataTemplate x:Key="RecycleCardTemplate" x:DataType="models:WallpaperItem">
+                <Grid Width="164" Height="108" Margin="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border CornerRadius="10" Background="#182030"
+                            BorderThickness="1" BorderBrush="#2A3446">
+                        <Image Source="{x:Bind Thumbnail, Mode=OneWay}"
+                               Stretch="UniformToFill"/>
+                    </Border>
+                    <Border Grid.Row="1" VerticalAlignment="Bottom"
+                            CornerRadius="0,0,10,10">
+                        <Border.Background>
+                            <AcrylicBrush TintColor="#FFFFFF"
+                                          TintOpacity="0.45"
+                                          FallbackColor="#B8FFFFFF"/>
+                        </Border.Background>
+                        <StackPanel Margin="12,4" Spacing="2">
+                            <TextBlock Text="{x:Bind Title, Mode=OneWay}"
+                                       FontWeight="SemiBold"
+                                       Foreground="#E610151F"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{x:Bind Kind}"
+                                       FontSize="11"
+                                       Foreground="#B310151F"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </DataTemplate>
             <ItemsPanelTemplate x:Key="DeleteGridPanel">
                 <ItemsWrapGrid Orientation="Horizontal"
                                MaximumRowsOrColumns="3"
@@ -561,6 +591,13 @@
                                             <ComboBoxItem Content="高清（1.5×）" Tag="1.5"/>
                                             <ComboBoxItem Content="超采样（2×）" Tag="2"/>
                                         </ComboBox>
+                                        <Button Content="编辑场景图层"
+                                                Click="EditSceneLayers_Click"
+                                                HorizontalAlignment="Stretch"
+                                                AutomationProperties.Name="编辑场景图层"/>
+                                        <TextBlock Text="调整图层位置、缩放、旋转、透明度和粒子数量，保存为新场景。"
+                                                   TextWrapping="Wrap" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                     </StackPanel>
 
                                     <StackPanel  x:Name="AiPanel" Spacing="4">
@@ -682,6 +719,22 @@
                 <views:AiInterpolationView x:Name="AiInterpolationViewControl" Visibility="Collapsed"/>
             </Grid>
         </NavigationView>
+
+        <Grid x:Name="SplashOverlay" Background="#FFFFFF"
+              Grid.RowSpan="2">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Spacing="10">
+                <TextBlock Text="白a茶出品"
+                           FontSize="46"
+                           FontWeight="SemiBold"
+                           Foreground="#1A1A1A"
+                           HorizontalAlignment="Center"/>
+                <ProgressRing IsActive="True" Width="26" Height="26"
+                              Foreground="#2B579A"
+                              HorizontalAlignment="Center"
+                              Margin="0,10,0,0"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>
 

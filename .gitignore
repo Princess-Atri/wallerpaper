@@ -5,6 +5,7 @@ artifacts/
 .vs/
 *.user
 *.suo
+*.bak
 
 # Local research / ACL recovery artifacts (not part of the product)
 research/

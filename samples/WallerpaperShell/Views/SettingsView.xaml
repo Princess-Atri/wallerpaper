@@ -100,9 +100,20 @@
                         <NumberBox x:Name="ThumbHeightBox" Header="缩略图高" Grid.Column="2"
                                    Minimum="90" Maximum="720" SpinButtonPlacementMode="Compact"/>
                     </Grid>
+                    <NumberBox x:Name="AutoCleanDaysBox" Header="自动清理天数（0 = 不自动清理）"
+                               Minimum="0" Maximum="365" SpinButtonPlacementMode="Compact"
+                               HorizontalAlignment="Stretch"/>
+                    <TextBlock Text="超过天数的裁剪、超分、补帧等中间产物会自动删除；仍在壁纸库或回收站中的文件始终保留。开发产物目录 artifacts（发布目录、安装包、调试截图、超分试样）同样按天数清理，但最近 3 天的内容会保留；崩溃转储只保留最新 1 个。"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Name="CacheUsageText" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Content="打开缓存目录" Click="OpenCache_Click"/>
+                        <Button Content="打开产物目录" Click="OpenArtifacts_Click"/>
                         <Button Content="清空缩略图缓存" Click="ClearCache_Click"/>
+                        <Button Content="立即清理" Click="CleanupNow_Click"/>
+                        <Button Content="查看日志" Click="OpenLogViewer_Click"/>
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -129,14 +140,16 @@
                     Background="{ThemeResource LayerFillColorDefaultBrush}"
                     BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="预览" FontSize="18" FontWeight="SemiBold"/>
-                    <Border Height="190" CornerRadius="8" Background="#141A24"
-                            HorizontalAlignment="Stretch">
-                        <Image x:Name="PreviewImage" Stretch="UniformToFill"/>
-                    </Border>
-                    <TextBlock x:Name="PreviewHint" FontSize="12"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                               Text="预览在设置页内显示，不会触碰真实桌面。视频请使用主界面的“预览”窗口。"/>
+                    <TextBlock Text="锁屏壁纸" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="Win+L 锁定后显示的图片。Windows 锁屏只支持静态图片，锁屏时动态壁纸引擎尚未启动，视频/场景壁纸会使用其首帧缩略图。"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <ComboBox x:Name="LockScreenCombo"
+                              Header="锁屏壁纸"
+                              HorizontalAlignment="Stretch">
+                        <ComboBoxItem Content="不修改系统锁屏" Tag="off"/>
+                        <ComboBoxItem Content="跟随当前壁纸（静态图或首帧）" Tag="match"/>
+                    </ComboBox>
                 </StackPanel>
             </Border>
 
@@ -145,6 +158,9 @@
                         Click="Save_Click"/>
                 <Button Content="恢复默认" Click="Reset_Click"/>
             </StackPanel>
+            <TextBlock x:Name="StatusText" FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

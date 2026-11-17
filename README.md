@@ -27,7 +27,7 @@
 - 兼容性检查清单：[`docs/COMPATIBILITY-CHECKLIST.md`](docs/COMPATIBILITY-CHECKLIST.md)
 - 资源占用指标：[`docs/RESOURCE-METRICS.md`](docs/RESOURCE-METRICS.md)
 - 单文件安装器：[`samples/Installer/WallerpaperSetup/`](samples/Installer/WallerpaperSetup/)
-- 安装包产物：[`artifacts/WallerpaperSetup.exe`](artifacts/WallerpaperSetup.exe)
+- 安装包产物：`artifacts/WallerpaperSetup.exe`（由 `tools/build-release.ps1` 生成，属于可再生的开发产物，每次构建会被重写；设置页的自动清理也会回收旧内容）
 
 ## 已确认决策
 

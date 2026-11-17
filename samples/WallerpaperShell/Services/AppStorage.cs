@@ -30,6 +30,9 @@ public static class AppStorage
 
     public static string RecycleRoot => Path.Combine(SoftwareRoot, "recycle");
 
+    /// <summary>开发期构建/测试产物（发布目录、安装包、截图、超分试样）。</summary>
+    public static string ArtifactsRoot => Path.Combine(SoftwareRoot, "artifacts");
+
     public static string ExportBesideSource(string tempFile, string sourceFile, string suffix)
     {
         var folder = Path.GetDirectoryName(sourceFile) ?? Path.GetDirectoryName(tempFile) ?? "";

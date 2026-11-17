@@ -24,6 +24,7 @@ public sealed partial class SettingsView : UserControl
     }
 
     public event EventHandler<ShellConfig>? Saved;
+    public event EventHandler? LogViewerRequested;
 
     public void Configure(ShellConfig config, WallpaperCatalog catalog, ThumbnailService thumbnails)
     {
@@ -33,17 +34,9 @@ public sealed partial class SettingsView : UserControl
         LoadValues();
     }
 
+    /// <summary>Kept for callers that used to feed the settings preview card.</summary>
     public void SetPreview(WallpaperItem? item)
     {
-        if (item is null || string.IsNullOrWhiteSpace(item.ThumbnailPath) || !File.Exists(item.ThumbnailPath))
-        {
-            PreviewImage.Source = null;
-            PreviewHint.Text = "未选择壁纸，或缩略图尚未生成。";
-            return;
-        }
-
-        PreviewImage.Source = new BitmapImage(new Uri(item.ThumbnailPath));
-        PreviewHint.Text = $"缩略图预览：{item.Title}（{item.Kind}）";
     }
 
     private void LoadValues()
@@ -78,10 +71,23 @@ public sealed partial class SettingsView : UserControl
             }
         }
 
+        foreach (ComboBoxItem item in LockScreenCombo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), _config.General.LockScreenMode,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                LockScreenCombo.SelectedItem = item;
+                break;
+            }
+        }
+        if (LockScreenCombo.SelectedItem is null)
+            LockScreenCombo.SelectedIndex = 0;
+
         CacheDirectoryBox.Text = _config.Cache.Directory;
         CacheSizeBox.Value = _config.Cache.MaxSizeMb;
         ThumbWidthBox.Value = _config.Cache.ThumbnailWidth;
         ThumbHeightBox.Value = _config.Cache.ThumbnailHeight;
+        AutoCleanDaysBox.Value = _config.Cache.AutoCleanDays;
 
         RebuildMonitorAssignments();
         var selected = _catalog?.Items.FirstOrDefault();
@@ -264,11 +270,15 @@ public sealed partial class SettingsView : UserControl
         _config.Playback.DeleteCurrentBehavior =
             (DeleteBehaviorCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
             ?? "previous";
+        _config.General.LockScreenMode =
+            (LockScreenCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+            ?? "off";
 
         _config.Cache.Directory = CacheDirectoryBox.Text.Trim();
         _config.Cache.MaxSizeMb = Int(CacheSizeBox.Value, 2048);
         _config.Cache.ThumbnailWidth = Int(ThumbWidthBox.Value, 480);
         _config.Cache.ThumbnailHeight = Int(ThumbHeightBox.Value, 270);
+        _config.Cache.AutoCleanDays = Int(AutoCleanDaysBox.Value, 14);
 
         try
         {
@@ -302,6 +312,27 @@ public sealed partial class SettingsView : UserControl
         }
 
         Saved?.Invoke(this, _config);
+        StatusText.Text = DescribeEffect(_config);
+    }
+
+    /// <summary>Tells the user which settings took effect now and which need
+    /// a renderer restart, so nothing silently "does nothing".</summary>
+    private static string DescribeEffect(ShellConfig config)
+    {
+        var immediate = new List<string>();
+        var restart = new List<string>();
+
+        immediate.Add("自启动、最小化到托盘、播放规则");
+        immediate.Add("自动清理天数、缩略图尺寸");
+        restart.Add("性能策略、交流电/电池帧率");
+        restart.Add("渲染缩放、最大粒子数、贴图显存上限");
+
+        var text = "已保存。立即生效：" + string.Join("、", immediate)
+            + "。重启调度器后生效：" + string.Join("、", restart) + "。";
+        if (string.Equals(config.General.LockScreenMode, "match",
+                StringComparison.OrdinalIgnoreCase))
+            text += " 锁屏壁纸会在下次应用壁纸时同步。";
+        return text;
     }
 
     private void Reset_Click(object sender, RoutedEventArgs e)
@@ -319,6 +350,65 @@ public sealed partial class SettingsView : UserControl
         CacheSizeBox.Value = 2048;
         ThumbWidthBox.Value = 480;
         ThumbHeightBox.Value = 270;
+        AutoCleanDaysBox.Value = 14;
+    }
+
+    private void OpenLogViewer_Click(object sender, RoutedEventArgs e)
+    {
+        LogViewerRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async void CleanupNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (_config is null) return;
+        var days = Int(AutoCleanDaysBox.Value, 14);
+        StatusText.Text = "正在清理…";
+        try
+        {
+            var result = await Task.Run(() =>
+                CacheCleanupService.Cleanup(_config, Math.Max(1, days)));
+            RefreshCacheUsage();
+            StatusText.Text =
+                $"清理完成：删除 {result.DeletedFiles} 个文件，" +
+                $"释放 {result.FreedBytes / 1048576.0:F0} MB，" +
+                $"保留 {result.KeptInUse} 个在用文件。";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "清理失败：" + ex.Message;
+        }
+    }
+
+    private void RefreshCacheUsage()
+    {
+        try
+        {
+            var (files, bytes) = CacheCleanupService.Measure();
+            var (aFiles, aBytes) = CacheCleanupService.MeasureArtifacts();
+            var (dFiles, dBytes) = CacheCleanupService.MeasureCrashDumps();
+            var text = $"当前缓存：{files} 个文件，{bytes / 1048576.0:F0} MB";
+            if (aFiles > 0)
+                text += $"\r\n开发产物 artifacts：{aFiles} 个文件，{aBytes / 1048576.0:F0} MB";
+            if (dFiles > 0)
+                text += $"\r\n崩溃转储：{dFiles} 个文件，{dBytes / 1048576.0:F0} MB（保留最新 1 个）";
+            CacheUsageText.Text = text;
+        }
+        catch
+        {
+            CacheUsageText.Text = "";
+        }
+    }
+
+    private void OpenArtifacts_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dir = AppStorage.ArtifactsRoot;
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"")
+                { UseShellExecute = true });
+        }
+        catch { }
     }
 
     private void RenderScale_Changed(object sender, RangeBaseValueChangedEventArgs e)
@@ -338,8 +428,7 @@ public sealed partial class SettingsView : UserControl
     private void ClearCache_Click(object sender, RoutedEventArgs e)
     {
         _thumbnails?.Clear();
-        PreviewImage.Source = null;
-        PreviewHint.Text = "缩略图缓存已清空，返回主界面刷新即可重新生成。";
+        StatusText.Text = "缩略图缓存已清空，返回主界面刷新即可重新生成。";
     }
 
     private static int Int(double value, int fallback) =>

@@ -30,7 +30,7 @@ public sealed class ThumbnailService
         var width = _config.Cache.ThumbnailWidth;
         var height = _config.Cache.ThumbnailHeight;
         var cache = Path.Combine(_config.Cache.Directory, $"{item.Id}_{width}x{height}.png");
-        if (File.Exists(cache))
+        if (File.Exists(cache) && IsUsableCacheFile(cache, item))
         {
             item.ThumbnailPath = cache;
             return cache;
@@ -39,7 +39,7 @@ public sealed class ThumbnailService
         await _gate.WaitAsync(ct);
         try
         {
-            if (File.Exists(cache))
+            if (File.Exists(cache) && IsUsableCacheFile(cache, item))
                 return cache;
 
             await Task.Run(() =>
@@ -150,6 +150,75 @@ public sealed class ThumbnailService
 
     private static bool TryFfmpegThumbnail(string path, int width, int height, string cache)
     {
+        // Several timestamps: cropped/letterboxed sources often open on a
+        // black frame, and the first bright one makes a usable preview.
+        foreach (var seek in new[] { "00:00:02", "00:00:01", "00:00:00.5" })
+        {
+            if (!TryFfmpegFrameAt(path, width, height, cache, seek))
+                continue;
+            if (IsThumbnailBrightEnough(cache))
+                return true;
+        }
+        return File.Exists(cache) && new FileInfo(cache).Length > 0;
+    }
+
+    /// <summary>
+    /// A cached thumbnail may be a near-black frame from an older run. Video
+    /// entries regenerate instead of showing the black card forever.
+    /// </summary>
+    private static bool IsUsableCacheFile(string cache, WallpaperItem item)
+    {
+        try
+        {
+            if (new FileInfo(cache).Length < 1024)
+                return false;
+            if (item.Kind is not (WallpaperKind.Video or WallpaperKind.Sequence))
+                return true;
+            if (IsThumbnailBrightEnough(cache))
+                return true;
+            // Delete so the regeneration path writes a new frame.
+            File.Delete(cache);
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>Rejects near-black frames (mean luma below 12/255).</summary>
+    private static bool IsThumbnailBrightEnough(string png)
+    {
+        try
+        {
+            using var bmp = new Bitmap(png);
+            var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+            var data = bmp.LockBits(rect, ImageLockMode.ReadOnly,
+                PixelFormat.Format24bppRgb);
+            try
+            {
+                var bytes = Math.Abs(data.Stride) * bmp.Height;
+                var buffer = new byte[bytes];
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0, buffer, 0, bytes);
+                long sum = 0;
+                for (var i = 0; i < bytes; i += 3)
+                    sum += Math.Max(buffer[i], Math.Max(buffer[i + 1], buffer[i + 2]));
+                return (double)sum / (bytes / 3.0) > 12;
+            }
+            finally
+            {
+                bmp.UnlockBits(data);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryFfmpegFrameAt(string path, int width, int height,
+        string cache, string seek)
+    {
         try
         {
             var ffmpeg = AiInterpolationService.FindFfmpegFrames();
@@ -170,7 +239,7 @@ public sealed class ThumbnailService
             psi.ArgumentList.Add("-loglevel");
             psi.ArgumentList.Add("error");
             psi.ArgumentList.Add("-ss");
-            psi.ArgumentList.Add("00:00:00.5");
+            psi.ArgumentList.Add(seek);
             psi.ArgumentList.Add("-i");
             psi.ArgumentList.Add(path);
             psi.ArgumentList.Add("-frames:v");

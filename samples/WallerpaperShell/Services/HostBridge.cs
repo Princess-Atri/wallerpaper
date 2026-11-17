@@ -106,6 +106,7 @@ public sealed class HostBridge : IDisposable
             };
             _process.Exited += (_, _) => Log?.Invoke($"host exited: {_process?.ExitCode}");
             _process.Start();
+            TryBoostPriority(_process, "host");
             try { _job?.Assign(_process); }
             catch (Exception ex) { Log?.Invoke($"host job assign failed: {ex.Message}"); }
             _process.BeginOutputReadLine();
@@ -126,6 +127,22 @@ public sealed class HostBridge : IDisposable
     {
         Stop();
         Start();
+    }
+
+    /// <summary>
+    /// Start the renderer above normal priority so it wins CPU/disk
+    /// contention during logon. The host inherits this for its children.
+    /// </summary>
+    internal static void TryBoostPriority(Process process, string label)
+    {
+        try
+        {
+            process.PriorityClass = ProcessPriorityClass.AboveNormal;
+        }
+        catch
+        {
+            // Priority change can fail for protected processes; harmless.
+        }
     }
 
     public void PauseAll() => Send("pause-all");

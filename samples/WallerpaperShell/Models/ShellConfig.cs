@@ -170,6 +170,12 @@ public sealed class GeneralConfig
     public bool StartMinimized { get; set; }
     public bool MinimizeToTray { get; set; } = true;
     public string Language { get; set; } = "zh-CN";
+
+    // Lock screen picture. The lock screen can only show a still image.
+    // off   - leave the system lock screen untouched
+    // match - follow the current wallpaper (static image, else its thumbnail)
+    public string LockScreenMode { get; set; } = "off";
+    public string LockScreenImage { get; set; } = "";
 }
 
 public sealed class PlaybackConfig
@@ -198,6 +204,9 @@ public sealed class CacheConfig
     public int ThumbnailWidth { get; set; } = 480;
     public int ThumbnailHeight { get; set; } = 270;
     public bool KeepThumbnails { get; set; } = true;
+    // Derived files (crop/superres/ai/…) older than this are pruned at
+    // startup and after long processing runs. 0 disables age pruning.
+    public int AutoCleanDays { get; set; } = 14;
 }
 
 public sealed class HostConfig

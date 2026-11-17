@@ -98,6 +98,9 @@ public partial class App : Application
             .Any(x => x.Equals("--minimized", StringComparison.OrdinalIgnoreCase));
         AppLog.Info($"OnLaunched minimized={minimized}");
         MainWindow = new MainWindow(minimized);
-        MainWindow.Activate();
+        // Activating a minimized launch would paint the manager window on the
+        // desktop for a frame at every logon; the tray path does not need it.
+        if (!minimized)
+            MainWindow.Activate();
     }
 }
