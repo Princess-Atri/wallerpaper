@@ -299,7 +299,8 @@ internal static class Program
         var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Any visible borderless fullscreen window counts, even when it is not
-        // foreground (e.g. a video player behind the terminal).
+        // foreground (e.g. a video player behind the terminal). Capture
+        // overlays are already filtered out by the excluded-process list.
         foreach (var monitorHandle in _foreground.FindFullscreenWindows())
         {
             var m = _monitors.Monitors.FirstOrDefault(x => x.Handle == monitorHandle);

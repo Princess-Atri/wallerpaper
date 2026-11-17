@@ -400,6 +400,22 @@ internal sealed class WebViewHost : IDisposable
         _core.Navigate(url);
     }
 
+    /// <summary>Shows a self-contained page without touching the network or
+    /// the allowed-host list; used for the crash placeholder.</summary>
+    public void NavigateToHtml(string html)
+    {
+        if (_disposed || _core is null)
+            return;
+        try
+        {
+            _core.NavigateToString(html);
+        }
+        catch (Exception ex)
+        {
+            _log($"navigateToString failed: {ex.Message}");
+        }
+    }
+
     public Dictionary<string, object?> GetStats()
     {
         using var p = Process.GetCurrentProcess();

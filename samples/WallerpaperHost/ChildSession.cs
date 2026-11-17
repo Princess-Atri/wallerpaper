@@ -199,6 +199,11 @@ internal sealed class ChildSession : IDisposable
             _startedAt = DateTime.UtcNow;
             Pid = p.Id;
             State = ChildState.Starting;
+            // Renderer processes win frame deadlines during logon contention;
+            // the decoder and compositor must not be starved by other boot
+            // work.
+            try { p.PriorityClass = ProcessPriorityClass.AboveNormal; }
+            catch { }
             try { _job?.Assign(p); } catch (Exception ex) { LastError = ex.Message; }
 
             p.BeginOutputReadLine();
@@ -270,7 +275,10 @@ internal sealed class ChildSession : IDisposable
     {
         _pauseRequested = true;
         if (!IsRunning) return;
-        Send(new { cmd = "pause" });
+        // Do not release the decoder surface on a short pause: releasing and
+        // re-creating D3D11VA surfaces shows one black frame on resume, which
+        // read as a flash when a screenshot/recorder overlay appeared.
+        Send(new { cmd = "pause", release = false });
         State = ChildState.Paused;
         _log($"[{Monitor.Device}] pause requested");
     }
@@ -417,7 +425,7 @@ internal sealed class ChildSession : IDisposable
                     _ready = true;
                     if (_pauseRequested)
                     {
-                        Send(new { cmd = "pause" });
+                        Send(new { cmd = "pause", release = false });
                         State = ChildState.Paused;
                         _log($"[{Monitor.Device}] ready pid={Pid}; pause re-applied");
                     }

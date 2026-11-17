@@ -50,6 +50,7 @@ internal sealed class LibMpv : IDisposable
     private readonly Action _pump;
     private readonly object _gate = new();
     private readonly ManualResetEventSlim _fileLoaded = new(false);
+    private readonly ManualResetEventSlim _firstFrame = new(false);
     private readonly CancellationTokenSource _cts = new();
 
     private IntPtr _ctx;
@@ -298,6 +299,9 @@ internal sealed class LibMpv : IDisposable
         }
     }
 
+    /// <summary>Waits until mpv presented the first frame after the load.</summary>
+    public bool WaitForFirstFrame(int timeoutMs) => _firstFrame.Wait(timeoutMs);
+
     /// <summary>
     /// Pause and optionally release the decoder. With release=true we disable the
     /// video track (vid=no); this drops the decoder/GPU surfaces while keeping the
@@ -453,7 +457,7 @@ internal sealed class LibMpv : IDisposable
             var duration = GetDouble("duration") ?? 0;
             if (duration < 0.8)
                 return;
-            const double fade = 0.35;
+            const double fade = 0.45;
             var start = Math.Max(0, duration - fade);
             Command("vf", "add",
                 $"@wp_seqfade:fade=out:st={start.ToString("0.###", CultureInfo.InvariantCulture)}" +
@@ -510,12 +514,38 @@ internal sealed class LibMpv : IDisposable
             Width = (int)(GetInt("width") ?? Width);
             Height = (int)(GetInt("height") ?? Height);
             Play();
+            // Fade the second clip in so the cut does not read as a jump.
+            TryApplyFadeIn(0.45);
             _log("sequence: now looping second video");
         }
         catch (Exception ex)
         {
             _lastError = ex.Message;
             _log($"sequence switch failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Fades the picture in from black after a sequence cut.</summary>
+    private void TryApplyFadeIn(double seconds)
+    {
+        try
+        {
+            Command("vf", "remove", "@wp_seqin");
+        }
+        catch
+        {
+            // No previous fade-in filter; fine.
+        }
+        try
+        {
+            Command("vf", "add",
+                $"@wp_seqin:fade=in:st=0:d={seconds.ToString("0.###", CultureInfo.InvariantCulture)}");
+            _log($"sequence: fade-in {seconds:F2}s");
+        }
+        catch (Exception ex)
+        {
+            // A libmpv build without the fade filter still plays the clip.
+            _log($"sequence: fade-in unavailable: {ex.Message}");
         }
     }
 
@@ -621,6 +651,9 @@ internal sealed class LibMpv : IDisposable
                         }
 
                     case MPV_EVENT_PLAYBACK_RESTART:
+                        // First frame after load: the window can be revealed
+                        // without flashing a blank black rectangle.
+                        _firstFrame.Set();
                         _log("mpv playback restart");
                         break;
                 }

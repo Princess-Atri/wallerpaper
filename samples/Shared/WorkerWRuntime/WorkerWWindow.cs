@@ -48,9 +48,12 @@ public sealed class WorkerWWindow : IDisposable
     private const uint WM_QUIT = 0x0012;
     private const uint PM_REMOVE = 0x0001;
     private const int TimerWatchdog = 1;
+    private const int TimerZOrder = 2;
     private const int IDC_ARROW = 32512;
     private const int ErrorClassAlreadyExists = 1410;
     private const uint SMTO_NORMAL = 0;
+    private const uint GW_HWNDPREV = 3;
+    private const uint WM_SETTINGCHANGE = 0x001A;
 
     private readonly Action<string> _log;
     private readonly IntPtr _hInstance;
@@ -74,6 +77,7 @@ public sealed class WorkerWWindow : IDisposable
     private bool _windowLost;
     private bool _detaching;
     private bool _disposed;
+    private bool _hidden;
 
     public WorkerWWindow(Action<string> log)
     {
@@ -101,8 +105,13 @@ public sealed class WorkerWWindow : IDisposable
 
     public event Action? WindowLost;
 
-    public bool CreateAndAttach()
+    public bool CreateAndAttach(bool showWindow = true)
     {
+        // A renderer that paints its own content a few hundred milliseconds
+        // after attach would otherwise flash an empty black rectangle over the
+        // desktop wallpaper. Such hosts attach hidden and call ShowWallpaper()
+        // once the first real frame is on screen.
+        _hidden = !showWindow;
         if (!CreateMessageWindow())
             return false;
 
@@ -120,6 +129,33 @@ public sealed class WorkerWWindow : IDisposable
 
         NativeMethods.SetTimer(_messageHwnd, (IntPtr)TimerWatchdog, 1000, IntPtr.Zero);
         return true;
+    }
+
+    /// <summary>
+    /// Reveals an attached-but-hidden render window. Called once the renderer
+    /// has a real frame, so the desktop never flashes a blank page.
+    /// </summary>
+    public void ShowWallpaper(string reason = "first frame")
+    {
+        if (!_hidden) return;
+        _hidden = false;
+        if (_windowLost || _windowHwnd == IntPtr.Zero ||
+            !NativeMethods.IsWindow(_windowHwnd))
+        {
+            return;
+        }
+
+        _primaryRect = GetPrimaryMonitorRect();
+        var pt = MapScreenToParent(_parent, _primaryRect.Left, _primaryRect.Top);
+        var ok = NativeMethods.SetWindowPos(
+            _windowHwnd, _insertAfter,
+            pt.X, pt.Y,
+            _primaryRect.Right - _primaryRect.Left,
+            _primaryRect.Bottom - _primaryRect.Top,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        NativeMethods.ShowWindow(_windowHwnd, 4 /* SW_SHOWNOACTIVATE */);
+        NativeMethods.UpdateWindow(_windowHwnd);
+        _log($"[show/{reason}] ok={ok}");
     }
 
     public void RunMessageLoop()
@@ -412,7 +448,8 @@ public sealed class WorkerWWindow : IDisposable
                     pt.X, pt.Y,
                     _primaryRect.Right - _primaryRect.Left,
                     _primaryRect.Bottom - _primaryRect.Top,
-                    SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+                    SWP_NOACTIVATE | SWP_FRAMECHANGED |
+                    (_hidden ? 0u : SWP_SHOWWINDOW));
 
                 if (!ok)
                 {
@@ -420,8 +457,11 @@ public sealed class WorkerWWindow : IDisposable
                     return false;
                 }
 
-                NativeMethods.ShowWindow(_windowHwnd, 4 /* SW_SHOWNOACTIVATE */);
-                NativeMethods.UpdateWindow(_windowHwnd);
+                if (!_hidden)
+                {
+                    NativeMethods.ShowWindow(_windowHwnd, 4 /* SW_SHOWNOACTIVATE */);
+                    NativeMethods.UpdateWindow(_windowHwnd);
+                }
 
                 _log($"Attached: hwnd=0x{_windowHwnd:X}, parent=0x{_parent:X}, " +
                      $"rect=({pt.X},{pt.Y},{_primaryRect.Right - _primaryRect.Left}x{_primaryRect.Bottom - _primaryRect.Top})");
@@ -480,7 +520,8 @@ public sealed class WorkerWWindow : IDisposable
             pt.X, pt.Y,
             _primaryRect.Right - _primaryRect.Left,
             _primaryRect.Bottom - _primaryRect.Top,
-            SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            SWP_NOACTIVATE | SWP_FRAMECHANGED |
+            (_hidden ? 0u : SWP_SHOWWINDOW));
 
         _log($"[{reason}] reposition ok={ok}, primary={RectToString(_primaryRect)}");
         if (!ok)
@@ -494,6 +535,20 @@ public sealed class WorkerWWindow : IDisposable
             case WM_TIMER:
                 if (wParam.ToInt32() == TimerWatchdog)
                     Watchdog();
+                else if (wParam.ToInt32() == TimerZOrder)
+                {
+                    NativeMethods.KillTimer(_messageHwnd, (IntPtr)TimerZOrder);
+                    EnsureZOrder("setting change");
+                }
+                return IntPtr.Zero;
+
+            case WM_SETTINGCHANGE:
+                // A desktop wallpaper change makes Explorer spawn/paint a new
+                // WorkerW above this child, which hides the video. Put the
+                // renderer back below SHELLDLL_DefView right away and once more
+                // shortly after (Explorer finishes the repaint asynchronously).
+                EnsureZOrder("WM_SETTINGCHANGE");
+                NativeMethods.SetTimer(_messageHwnd, (IntPtr)TimerZOrder, 250, IntPtr.Zero);
                 return IntPtr.Zero;
 
             case WM_DISPLAYCHANGE:
@@ -567,7 +622,38 @@ public sealed class WorkerWWindow : IDisposable
         {
             _log($"Watchdog: windowOk={windowOk}, parentOk={parentOk}, parentMatch={parentMatch}");
             MarkLost("watchdog");
+            return;
         }
+
+        EnsureZOrder("watchdog");
+    }
+
+    /// <summary>
+    /// Keeps the render child directly below SHELLDLL_DefView. Windows creates
+    /// a fresh wallpaper-painting WorkerW whenever the desktop image changes
+    /// (the "first frame" feature does this on every switch), and Explorer
+    /// inserts it above our child, so without this the video keeps running but
+    /// is completely covered by the static wallpaper.
+    /// </summary>
+    private void EnsureZOrder(string reason)
+    {
+        if (_windowLost || _disposed || !_isRaised) return;
+        if (_windowHwnd == IntPtr.Zero || !NativeMethods.IsWindow(_windowHwnd)) return;
+        if (_parent != _progman || _defView == IntPtr.Zero) return;
+        if (NativeMethods.GetParent(_windowHwnd) != _progman) return;
+
+        var above = NativeMethods.GetWindow(_windowHwnd, GW_HWNDPREV);
+        if (above == _defView) return;
+        if (above != IntPtr.Zero)
+        {
+            // Only fight Explorer's wallpaper layer; leave other overlays alone.
+            if (!string.Equals(GetClassName(above), "WorkerW", StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+
+        var ok = NativeMethods.SetWindowPos(_windowHwnd, _defView, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        _log($"[zorder/{reason}] above=0x{above:X} ({GetClassName(above)}) -> restored={ok}");
     }
 
     private void MarkLost(string reason)
@@ -720,6 +806,9 @@ public sealed class WorkerWWindow : IDisposable
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr GetParent(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern int MapWindowPoints(

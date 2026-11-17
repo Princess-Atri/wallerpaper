@@ -12,6 +12,23 @@ internal enum PerformancePolicy
 
 internal sealed class SchedulerConfig
 {
+    /// <summary>
+    /// Screen capture / recording tools. Their overlay covers the monitor for
+    /// a moment; pausing the wallpaper for that flash is what users see as a
+    /// flicker, so they never suppress playback.
+    /// </summary>
+    public static readonly string[] CaptureToolProcesses =
+    {
+        "SnippingTool.exe", "ScreenSketch.exe", "SnippingTool-ux.exe",
+        "WinSnap.exe", "Snipaste.exe", "ShareX.exe", "PixPin.exe",
+        "FastStoneCapturePortable.exe", "FastStoneCapture.exe",
+        "Greenshot.exe", "Lightshot.exe", "FSCapture.exe",
+        "obs64.exe", "obs32.exe", "Bandicam.exe", "BandicamPortable.exe",
+        "CamRecorder.exe", "ScreenToGif.exe", "FSCapturePortable.exe",
+        "QQScreenshot.exe", "QQScLauncher.exe", "PrintScreen.exe",
+        "Nimbus Capture.exe", "SnipDo.exe", "Flameshot.exe", "Spectacle.exe",
+        "GameBar.exe", "GameBarFT.exe", "XboxGameBar.exe"
+    };
     public string ChildExe { get; set; } = "";
     public string? VideoChildExe { get; set; }
     public string? WebChildExe { get; set; }
@@ -78,6 +95,14 @@ internal sealed class SchedulerConfig
                 "LockApp.exe", "WallerpaperHost.exe", "SceneWallpaperHost.exe"
             });
         }
+        // Screenshot/recorder/screen-capture overlays cover the whole monitor
+        // for a moment. Treating them as fullscreen made the wallpaper pause
+        // and resume, which showed up as a visible flash.
+        foreach (var captureExe in CaptureToolProcesses)
+        {
+            if (!cfg.ExcludeProcesses.Contains(captureExe, StringComparer.OrdinalIgnoreCase))
+                cfg.ExcludeProcesses.Add(captureExe);
+        }
         if (cfg.FullscreenScanProcesses.Count == 0)
         {
             // Background fullscreen scanning is deliberately scoped to known
@@ -89,6 +114,10 @@ internal sealed class SchedulerConfig
                 "msedge.exe", "chrome.exe", "firefox.exe"
             });
         }
+        // Capture tools are not added to the fullscreen scan list, so their
+        // momentary overlay never pauses the wallpaper.
+        cfg.FullscreenScanProcesses.RemoveAll(x =>
+            CaptureToolProcesses.Contains(x, StringComparer.OrdinalIgnoreCase));
         if (cfg.ExcludeTitles.Count == 0)
             cfg.ExcludeTitles.AddRange(new[] { "Task Manager", "任务管理器", "Settings", "设置" });
         cfg.Volume = Math.Clamp(cfg.Volume, 0, 100);

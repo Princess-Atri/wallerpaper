@@ -189,6 +189,12 @@ internal sealed class WebHostApp
     private SynchronizationContext? _uiContext;
     private int _exitCode;
     private bool _shuttingDown;
+    private volatile bool _stopping;
+    private int _crashCount;
+
+    /// <summary>How many WebView2 render-process failures are rebuilt before
+    /// the host gives up and shows a static placeholder.</summary>
+    private const int MaxCrashRecoveries = 3;
 
     public WebHostApp(Options options)
     {
@@ -241,6 +247,95 @@ internal sealed class WebHostApp
         }
     }
 
+    /// <summary>
+    /// The WebView2 render process can die without taking the host down. Show
+    /// an in-page fallback and rebuild the view a few times before giving up,
+    /// so a transient crash does not leave a blank desktop.
+    /// </summary>
+    private void RecoverFromWebCrash(string message)
+    {
+        if (_stopping) return;
+        _crashCount++;
+        SendError("E_WEBVIEW_CRASH", message);
+        Log($"webview crashed ({_crashCount}): {message}");
+
+        if (_crashCount > MaxCrashRecoveries)
+        {
+            Log("webview crash limit reached; falling back to static placeholder");
+            TryShowFallbackPage();
+            return;
+        }
+
+        var delay = Math.Min(30000, 1500 * _crashCount);
+        Log($"webview recover scheduled in {delay}ms");
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(delay);
+            if (_stopping) return;
+            try
+            {
+                PostToUi(async () =>
+                {
+                    try
+                    {
+                        _web?.Dispose();
+                        _web = null;
+                        _web = new WebViewHost(_options, Log);
+                        _web.Loaded += () => SendEvent("loaded", new Dictionary<string, object?>
+                        {
+                            ["url"] = _options.Url ?? "wallerpaper.local",
+                            ["recovered"] = true
+                        });
+                        _web.ProcessFailed += m => RecoverFromWebCrash(m);
+                        await _web.InitializeAsync(_worker!.WindowHandle, _options);
+                        SendEvent("recovered", new Dictionary<string, object?>
+                        {
+                            ["attempt"] = _crashCount
+                        });
+                        Log("webview recovered");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"webview recover failed: {ex.Message}");
+                        _exitCode = 5;
+                        RequestStop();
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log($"webview recover post failed: {ex.Message}");
+            }
+        });
+    }
+
+    private void TryShowFallbackPage()
+    {
+        try
+        {
+            PostToUi(() =>
+            {
+                try
+                {
+                    var html = "<!doctype html><html><head><meta charset='utf-8'>" +
+                               "<style>html,body{margin:0;height:100%;background:#0b1020;" +
+                               "color:#8899bb;font-family:Segoe UI,sans-serif;" +
+                               "display:flex;align-items:center;justify-content:center;}</style></head>" +
+                               "<body><div>Web 壁纸暂时不可用</div></body></html>";
+                    _web?.NavigateToHtml(html);
+                }
+                catch (Exception ex)
+                {
+                    Log($"fallback page failed: {ex.Message}");
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log($"fallback page post failed: {ex.Message}");
+        }
+    }
+
     private async Task InitializeAsync()
     {
         try
@@ -253,12 +348,7 @@ internal sealed class WebHostApp
             {
                 ["url"] = _options.Url ?? "wallerpaper.local"
             });
-            _web.ProcessFailed += (message) =>
-            {
-                SendError("E_WEBVIEW_CRASH", message);
-                _exitCode = 5;
-                RequestStop();
-            };
+            _web.ProcessFailed += (message) => RecoverFromWebCrash(message);
 
             await _web.InitializeAsync(_worker!.WindowHandle, _options);
 
@@ -439,6 +529,7 @@ internal sealed class WebHostApp
 
     private void RequestStop()
     {
+        _stopping = true;
         PostToUi(() =>
         {
             if (_shuttingDown)

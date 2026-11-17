@@ -276,7 +276,7 @@ internal sealed class VideoHostApp
                 Log("WorkerW window lost; exiting so parent can restart child.");
             };
 
-            if (!_worker.CreateAndAttach())
+            if (!_worker.CreateAndAttach(showWindow: false))
             {
                 SendError("E_WORKERW",
                     "Failed to find/attach WorkerW. Check that explorer.exe is running in this " +
@@ -296,6 +296,22 @@ internal sealed class VideoHostApp
             {
                 _mpv!.Play();
                 Log("autoplay: video started");
+                // The window was attached hidden so the desktop wallpaper (the
+                // same first frame) stays visible; reveal it only once mpv has
+                // presented a real frame.
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        var ready = _mpv!.WaitForFirstFrame(4000);
+                        _worker.ShowWallpaper(ready ? "first frame" : "timeout");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"show wallpaper failed: {ex.Message}");
+                        _worker.ShowWallpaper("error");
+                    }
+                });
                 _fpsTimer = new Timer(_ =>
                 {
                     try
