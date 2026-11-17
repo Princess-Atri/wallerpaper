@@ -68,6 +68,9 @@ public sealed partial class MainWindow : Window
 	private string _navFilterTag = "Video";
 
 	private readonly Dictionary<string, CancellationTokenSource> _fastSwitchDebounce = new(StringComparer.OrdinalIgnoreCase);
+	/// <summary>Invalidates a pending desktop-frame sync when a newer switch
+	/// happens before the delay elapsed.</summary>
+	private volatile int _frameSyncToken;
 
 	private List<WallpaperItem> _visible = new List<WallpaperItem>();
 
@@ -5621,6 +5624,7 @@ public sealed partial class MainWindow : Window
 			if (await TryPreloadSwapAsync(monitorDisplay.Device))
 			{
 				SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
+				ScheduleDesktopFrameSync(wallpaperItem, monitorDisplay);
 			}
 			else if (wallpaperItem.Kind == WallpaperKind.Video &&
 			         !string.Equals(previousItem?.Path, wallpaperItem.Path, StringComparison.OrdinalIgnoreCase) &&
@@ -5630,6 +5634,7 @@ public sealed partial class MainWindow : Window
 				// loads the next file in the same process (~40ms gap).
 				ScheduleFastSwitch(monitorDisplay.Device, wallpaperItem.Path);
 				SetStatus("已应用 " + wallpaperItem.Title + " → " + monitorDisplay.Label);
+				ScheduleDesktopFrameSync(wallpaperItem, monitorDisplay);
 			}
 			else
 			{
@@ -5666,8 +5671,7 @@ public sealed partial class MainWindow : Window
 	/// host is not running or the swap failed, so the caller can fall back to
 	/// rebuilding the host.
 	/// </summary>
-	private async Task<bool> TryPreloadSwapAsync(string device)
-	{
+	private async Task<bool> TryPreloadSwapAsync(string device)	{
 		if (!_host.IsRunning)
 			return false;
 
@@ -5707,6 +5711,34 @@ public sealed partial class MainWindow : Window
 			_host.ApplyApplied -= OnApplied;
 			_host.ApplyFailed -= OnFailed;
 		}
+	}
+
+	/// <summary>
+	/// Keeps the system desktop wallpaper on the wallpaper that is playing now.
+	/// The renderer covers the desktop, so the wallpaper is switched a moment
+	/// <em>after</em> the new renderer is up instead of before it: Explorer's
+	/// re-created wallpaper window stays below the live renderer, so the change
+	/// is not visible. A newer switch invalidates an older pending sync.
+	/// </summary>
+	private void ScheduleDesktopFrameSync(WallpaperItem item, MonitorDisplay monitor,
+		int delayMs = 1000)
+	{
+		var token = ++_frameSyncToken;
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				await Task.Delay(delayMs);
+				if (_frameSyncToken != token)
+					return;
+				await DesktopFirstFrameService.ApplyAsync(
+					item, monitor.Width, monitor.Height);
+			}
+			catch (Exception ex)
+			{
+				AppLog.Error("desktop frame sync failed", ex);
+			}
+		});
 	}
 
 	/// <summary>

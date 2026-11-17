@@ -29,7 +29,7 @@ public static class DesktopFirstFrameService
     /// jump.
     /// </summary>
     public static async Task<bool> ApplyAsync(WallpaperItem item, int width = 0,
-        int height = 0)
+        int height = 0, int delayBeforeSetMs = 0)
     {
         if (item is null) return false;
         try
@@ -53,6 +53,8 @@ public static class DesktopFirstFrameService
             var frame = await Task.Run(() => ExtractFirstFrame(item, width, height));
             if (string.IsNullOrWhiteSpace(frame) || !File.Exists(frame))
                 return false;
+            if (delayBeforeSetMs > 0)
+                await Task.Delay(delayBeforeSetMs);
             if (!DesktopWallpaperService.SetImage(frame))
             {
                 TryDeleteFile(frame);
