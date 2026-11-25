@@ -14,7 +14,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="scheduler.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Dev-only sample config: never ship it. The shell writes the real
+         scheduler.json into %LOCALAPPDATA%\BaiAcha at runtime. -->
+    <None Include="scheduler.json" CopyToOutputDirectory="Never" />
     <None Include="fallback.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
