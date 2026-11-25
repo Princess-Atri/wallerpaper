@@ -52,6 +52,12 @@
                         <ComboBoxItem Content="4×（1080p → 4320p，输出封顶 4K）" Tag="4"/>
                     </ComboBox>
 
+                    <CheckBox x:Name="FastModeCheck" Content="快速放大（不走 AI，GPU 编码，秒级）"
+                              Checked="FastMode_Changed" Unchecked="FastMode_Changed"/>
+                    <TextBlock x:Name="FastModeHint" FontSize="12" TextWrapping="Wrap"
+                               Text="勾选后使用 降噪 → lanczos 放大 → CAS 锐化 + 硬件编码，几秒出片；不会像 AI 那样「猜」出新细节。"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
                     <ComboBox x:Name="ModelCombo" Header="模型"
                               HorizontalAlignment="Stretch"
                               SelectedIndex="0">

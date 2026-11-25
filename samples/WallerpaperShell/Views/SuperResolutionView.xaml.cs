@@ -95,6 +95,16 @@ public sealed partial class SuperResolutionView : UserControl
         }
     }
 
+    private void FastMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (ModelCombo is null) return;
+        var fast = FastModeCheck.IsChecked == true;
+        ModelCombo.IsEnabled = !fast;
+        FastModeHint.Text = fast
+            ? "将使用 GPU 硬件编码（h264_mf / NVENC），几秒出片；不会像 AI 那样猜出细节。"
+            : "勾选后使用 降噪 → lanczos 放大 → CAS 锐化 + 硬件编码，几秒出片；不会像 AI 那样「猜」出新细节。";
+    }
+
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedPath is null || !File.Exists(_selectedPath) ||
@@ -119,27 +129,45 @@ public sealed partial class SuperResolutionView : UserControl
 
         try
         {
-            var service = new SuperResolutionService();
             var targetDir = string.IsNullOrWhiteSpace(_config.Cache.OutputDirectory)
                 ? null
                 : _config.Cache.OutputDirectory;
-            var eta = new ProgressEta();
-            var result = await service.UpscaleAsync(
-                _selectedPath, 30, factor, model,
-                (percent, message) => DispatcherQueue.TryEnqueue(() =>
-                {
-                    ProgressBar.Value = Math.Clamp(percent, 0, 100);
-                    StatusText.Text = eta.Format(percent, message);
-                }), _cts.Token, targetDir);
+
+            string outputPath;
+            if (FastModeCheck.IsChecked == true)
+            {
+                var fastService = new FastUpscaleService();
+                var fastResult = await fastService.UpscaleAsync(
+                    _selectedPath, factor, targetDir,
+                    (percent, message) => DispatcherQueue.TryEnqueue(() =>
+                    {
+                        ProgressBar.Value = Math.Clamp(percent, 0, 100);
+                        StatusText.Text = message;
+                    }), _cts.Token);
+                outputPath = fastResult.OutputPath;
+            }
+            else
+            {
+                var service = new SuperResolutionService();
+                var eta = new ProgressEta();
+                var result = await service.UpscaleAsync(
+                    _selectedPath, 30, factor, model,
+                    (percent, message) => DispatcherQueue.TryEnqueue(() =>
+                    {
+                        ProgressBar.Value = Math.Clamp(percent, 0, 100);
+                        StatusText.Text = eta.Format(percent, message);
+                    }), _cts.Token, targetDir);
+                outputPath = result.OutputPath;
+            }
 
             LibraryChanged?.Invoke(this, EventArgs.Empty);
             if (targetDir is not null)
             {
-                StatusText.Text = "完成，已输出到：" + result.OutputPath;
+                StatusText.Text = "完成，已输出到：" + outputPath;
             }
             else
             {
-                var exported = AppStorage.ExportBesideSource(result.OutputPath,
+                var exported = AppStorage.ExportBesideSource(outputPath,
                     _selectedPath, $"_SR{factor}x");
                 StatusText.Text = "完成，已输出到原视频目录：" + exported;
             }
