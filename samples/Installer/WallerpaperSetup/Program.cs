@@ -119,18 +119,54 @@ internal static class Program
 
     internal sealed record InstallOptions(bool Autostart, bool Shortcuts, bool Launch, bool RemoveLegacy);
 
+    /// <summary>Creates a staging directory that is actually writable: probes
+    /// the install target first, then the app-data folder, then temp, and
+    /// reports every refused location when none works.</summary>
+    private static string CreateStaging(string installDir)
+    {
+        var candidates = new[]
+        {
+            installDir,
+            Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.LocalApplicationData), "BaiAcha", "staging"),
+            Path.Combine(Path.GetTempPath(), "BaiAchaSetup")
+        };
+        var errors = new List<string>();
+        foreach (var root in candidates)
+        {
+            try
+            {
+                Directory.CreateDirectory(root);
+                var probe = Path.Combine(root, ".write-probe-" + Guid.NewGuid().ToString("N"));
+                File.WriteAllText(probe, "x");
+                File.Delete(probe);
+                var staging = Path.Combine(root, ".staging-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(staging);
+                Log("staging -> " + staging);
+                return staging;
+            }
+            catch (Exception ex)
+            {
+                errors.Add(root + " -> " + ex.Message);
+                Log("staging candidate refused: " + root + ": " + ex.Message);
+            }
+        }
+        throw new InvalidOperationException(
+            "找不到可写入的临时目录，安装无法继续：\n" + string.Join("\n", errors) +
+            "\n请换一个安装位置（例如 C:\\Users\\<你>\\AppData\\Local\\Programs\\BaiAcha 或 D:\\BaiAcha）。");
+    }
+
     internal static int Install(string installDir, InstallOptions options)
     {
         try
         {
             StopProcesses();
-            // Stage inside the install directory itself: creating folders at a
-            // drive root or in %TEMP% can be denied by security software, while
-            // the install target is by definition writable.
-            Directory.CreateDirectory(installDir);
-            var staging = Path.Combine(installDir,
-                ".staging-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(staging);
+            Log("install start -> " + installDir);
+
+            // Pick the first directory we can actually create files in. A user
+            // may point at a protected/redirected folder (Desktop, OneDrive,
+            // a read-only drive), so probe instead of assuming.
+            var staging = CreateStaging(installDir);
             try
             {
                 using (var payload = Assembly.GetExecutingAssembly()
@@ -149,6 +185,14 @@ internal static class Program
                     File.Copy(file, target, overwrite: true);
                 }
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                throw new InvalidOperationException(
+                    $"无法写入安装位置：{installDir}\n" +
+                    "这个文件夹可能受系统保护（桌面/文档/OneDrive 等受控目录）或没有写权限。\n" +
+                    "请点“浏览…”换到默认的 %LOCALAPPDATA%\\Programs\\BaiAcha，或例如 D:\\BaiAcha。\n" +
+                    "原始错误：" + ex.Message, ex);
+            }
             finally
             {
                 try { Directory.Delete(staging, recursive: true); } catch { }
@@ -157,7 +201,11 @@ internal static class Program
             var eula = ReadEula();
             File.WriteAllText(Path.Combine(installDir, "用户协议.txt"), eula);
 
-            WriteUninstallInfo(installDir);
+            // Registry writes are best-effort: security software can deny HKCU,
+            // and the app itself can register/unregister later.
+            try { WriteUninstallInfo(installDir); }
+            catch (Exception ex) { Log("uninstall info skipped: " + ex.Message); }
+
             if (options.Shortcuts)
             {
                 CreateShortcut(Path.Combine(Environment.GetFolderPath(
@@ -171,10 +219,17 @@ internal static class Program
             var exe = Path.Combine(installDir, "BaiAcha.exe");
             if (options.Autostart && File.Exists(exe))
             {
-                using var run = Registry.CurrentUser.CreateSubKey(
-                    @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-                run.SetValue(RunValue, $"\"{exe}\" --minimized");
-                run.DeleteValue("WallerpaperShell", throwOnMissingValue: false);
+                try
+                {
+                    using var run = Registry.CurrentUser.CreateSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                    run.SetValue(RunValue, $"\"{exe}\" --minimized");
+                    run.DeleteValue("WallerpaperShell", throwOnMissingValue: false);
+                }
+                catch (Exception ex)
+                {
+                    Log("autostart skipped: " + ex.Message);
+                }
             }
 
             if (options.RemoveLegacy && Directory.Exists(LegacyInstallDir))
