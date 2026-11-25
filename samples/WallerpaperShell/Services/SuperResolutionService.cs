@@ -68,7 +68,8 @@ public sealed class SuperResolutionService
         int factor,
         string model,
         Action<int, string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? outputDirectory = null)
     {
         if (!File.Exists(inputPath))
             throw new FileNotFoundException("视频不存在", inputPath);
@@ -84,8 +85,9 @@ public sealed class SuperResolutionService
         var ffmpegEncode = AiInterpolationService.FindFfmpegEncode()
             ?? throw new InvalidOperationException("未找到 H.264 编码用 FFmpeg。");
         model = string.IsNullOrWhiteSpace(model) ? "realesr-animevideov3" : model;
-        if (model is "realesrgan-x4plus" or "realesrgan-x4plus-anime" && factor != 4)
-            factor = 4;
+        // realesrgan-x4plus ships x4 weights only, but the ncnn tool accepts
+        // -s 2/-s 3 by running the x4 network and downscaling internally, so
+        // 2x is a legitimate (and much smaller output) choice for real footage.
         var modelDir = Path.Combine(Path.GetDirectoryName(esrgan)!, "models");
         // realesr-animevideov3 ships as -x2/-x3/-x4 files, while
         // realesrgan-x4plus ships without a scale suffix.
@@ -121,7 +123,10 @@ public sealed class SuperResolutionService
         Directory.CreateDirectory(frames);
         Directory.CreateDirectory(upscaled);
 
-        var outputDir = AppStorage.CachePath("superres");
+        var outputDir = !string.IsNullOrWhiteSpace(outputDirectory)
+            ? outputDirectory!
+            : AppStorage.CachePath("superres");
+        Directory.CreateDirectory(outputDir);
         var stem = Path.GetFileNameWithoutExtension(inputPath);
         var output = Path.Combine(outputDir,
             $"{stem}_SR{factor}x_{DateTime.Now:yyyyMMdd-HHmmss}.mp4");
