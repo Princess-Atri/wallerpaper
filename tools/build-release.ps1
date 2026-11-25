@@ -51,21 +51,31 @@ Remove-Item $payload -Force -ErrorAction SilentlyContinue
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $publish, $payload, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
-Write-Host '[4/6] publish single-file installer (BaiAchaSetup 1.0.0)'
+Write-Host '[4/6] publish installer folder (BaiAchaSetup 1.0.0)'
+# Folder layout, not single-file: the single-file apphost extracts itself into
+# %TEMP%\.net and some machines/security products deny that, which made a
+# double-clicked setup exit silently without any window.
 dotnet publish (Join-Path $root 'samples\Installer\WallerpaperSetup\WallerpaperSetup.csproj') `
     -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:EnableCompressionInSingleFile=true `
+    -p:PublishSingleFile=false `
     -o $installerOut
 
 $setup = Join-Path $installerOut 'BaiAchaSetup.exe'
 if (-not (Test-Path $setup)) { throw 'installer output missing (expected BaiAchaSetup.exe)' }
-Copy-Item $setup (Join-Path $artifacts 'BaiAchaSetup.exe') -Force
+$setupDir = Join-Path $artifacts 'BaiAchaSetup'
+Remove-Item $setupDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path $setupDir -Force | Out-Null
+Copy-Item (Join-Path $installerOut '*') $setupDir -Recurse -Force
+Compress-Archive -Path (Join-Path $setupDir '*') `
+    -DestinationPath (Join-Path $artifacts 'BaiAchaSetup-1.0.0.zip') -Force
+if (Test-Path (Join-Path $artifacts 'BaiAchaSetup.exe')) {
+    Remove-Item (Join-Path $artifacts 'BaiAchaSetup.exe') -Force
+}
 
 Write-Host '[5/6] single-file WinUI limitation'
 Write-Host 'WinUI 3 self-contained app is delivered as a folder inside the installer;'
 Write-Host 'PublishSingleFile on the shell is NOT supported at runtime (XAML activation failure).'
 
 Write-Host '[6/6] done'
-Get-Item (Join-Path $artifacts 'BaiAchaSetup.exe'), $payload |
+Get-Item (Join-Path $artifacts 'BaiAchaSetup'), (Join-Path $artifacts 'BaiAchaSetup-1.0.0.zip'), $payload |
     Select-Object FullName, Length, LastWriteTime
