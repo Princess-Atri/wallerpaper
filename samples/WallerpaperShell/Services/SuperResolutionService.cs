@@ -272,7 +272,9 @@ public sealed class SuperResolutionService
                 "-c:v", "libx264", "-preset", "medium", "-crf", "14", "-pix_fmt", "yuv420p"
             });
             if (hasAudio && File.Exists(audio))
-                encode.AddRange(new[] { "-c:a", "aac", "-b:a", "192k", "-shortest" });
+                // The encoder FFmpeg is a stripped build with no AAC encoder, so
+            // the already-AAC audio track is remuxed instead of re-encoded.
+            encode.AddRange(new[] { "-c:a", "copy", "-shortest" });
             encode.AddRange(new[] { "-movflags", "+faststart", output });
             try { File.Delete(output); } catch { }
             if (!await Run(ffmpegEncode, encode, cancellationToken) ||

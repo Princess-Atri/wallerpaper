@@ -207,6 +207,10 @@ public sealed class CacheConfig
     // Derived files (crop/superres/ai/…) older than this are pruned at
     // startup and after long processing runs. 0 disables age pruning.
     public int AutoCleanDays { get; set; } = 14;
+    // Where AI interpolation / super-resolution results are written. Empty
+    // keeps the old behaviour: render into the cache, then copy the result
+    // next to the source file.
+    public string OutputDirectory { get; set; } = "";
 }
 
 public sealed class HostConfig

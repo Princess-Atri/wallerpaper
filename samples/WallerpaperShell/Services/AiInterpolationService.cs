@@ -18,6 +18,12 @@ public sealed record AiInterpolationResult(
 /// </summary>
 public sealed class AiInterpolationService
 {
+    /// <summary>Last stderr tail from the tool that failed, so the UI can say
+    /// why instead of a generic "encode failed".</summary>
+    public string LastToolError { get; private set; } = "";
+
+    private string ToolErrorTail()
+        => string.IsNullOrWhiteSpace(LastToolError) ? "" : "\n" + LastToolError;
     public static string ToolRoot
     {
         get
@@ -97,7 +103,8 @@ public sealed class AiInterpolationService
         double sourceFps,
         int factor,
         Action<int, string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? outputDirectory = null)
     {
         if (!File.Exists(inputPath))
             throw new FileNotFoundException("source video not found", inputPath);
@@ -125,7 +132,10 @@ public sealed class AiInterpolationService
         Directory.CreateDirectory(framesDir);
         Directory.CreateDirectory(outputFramesDir);
 
-        var outputDir = AppStorage.CachePath("ai");
+        var outputDir = !string.IsNullOrWhiteSpace(outputDirectory)
+            ? outputDirectory!
+            : AppStorage.CachePath("ai");
+        Directory.CreateDirectory(outputDir);
         var stem = Path.GetFileNameWithoutExtension(inputPath);
         var outputPath = Path.Combine(outputDir,
             $"{stem}_AI{factor}x_{DateTime.Now:yyyyMMdd-HHmmss}.mp4");
@@ -254,12 +264,13 @@ public sealed class AiInterpolationService
                 "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-pix_fmt", "yuv420p"
             });
             if (hasAudio && File.Exists(audioPath))
-                encodeArgs.AddRange(new[] { "-c:a", "aac", "-b:a", "192k", "-shortest" });
+                encodeArgs.AddRange(new[] { "-c:a", "copy", "-shortest" });
             encodeArgs.AddRange(new[] { "-movflags", "+faststart", outputPath });
             try { File.Delete(outputPath); } catch { }
             if (!await RunProcessAsync(ffmpegEncode, encodeArgs, line => { }, cancellationToken) ||
                 !File.Exists(outputPath) || new FileInfo(outputPath).Length < 1024)
-                throw new InvalidOperationException("H.264 高质量编码失败。");
+                throw new InvalidOperationException(
+                    "H.264 高质量编码失败。" + ToolErrorTail());
 
             progress?.Invoke(100, "AI 插帧完成");
             return new AiInterpolationResult(outputPath, sourceFps, targetFps,
@@ -271,13 +282,13 @@ public sealed class AiInterpolationService
         }
     }
 
-    private static async Task<bool> RunFfmpegAsync(string ffmpeg, IEnumerable<string> args,
+    private async Task<bool> RunFfmpegAsync(string ffmpeg, IEnumerable<string> args,
         Action<string>? progress, CancellationToken cancellationToken)
     {
         return await RunProcessAsync(ffmpeg, args, progress, cancellationToken);
     }
 
-    private static async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args,
+    private async Task<bool> RunProcessAsync(string exe, IEnumerable<string> args,
         Action<string>? progress, CancellationToken cancellationToken)
     {
         var psi = new ProcessStartInfo
@@ -318,6 +329,13 @@ public sealed class AiInterpolationService
             try { process.Kill(entireProcessTree: true); } catch { }
             throw;
         }
-        return process.ExitCode == 0;
+        if (process.ExitCode != 0)
+        {
+            var text = stderr.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+                LastToolError = text.Length > 800 ? text[^800..] : text;
+            return false;
+        }
+        return true;
     }
 }

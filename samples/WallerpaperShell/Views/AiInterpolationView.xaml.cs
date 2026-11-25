@@ -26,6 +26,48 @@ public sealed partial class AiInterpolationView : UserControl
     {
         _config = config;
         _catalog = catalog;
+        RefreshOutputUi();
+    }
+
+    private void RefreshOutputUi()
+    {
+        var dir = _config?.Cache.OutputDirectory ?? "";
+        OutputDirText.Text = dir;
+        OutputHintText.Text = string.IsNullOrWhiteSpace(dir)
+            ? "默认：先渲染到缓存，完成后复制到源视频所在目录。"
+            : "结果会直接写入该目录（不存在会自动创建）。";
+    }
+
+    private async void PickOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (_config is null) return;
+        try
+        {
+            var picker = new FolderPicker();
+            picker.FileTypeFilter.Add("*");
+            if (App.MainWindow is null) return;
+            InitializeWithWindow.Initialize(picker,
+                WindowNative.GetWindowHandle(App.MainWindow));
+            var folder = await picker.PickSingleFolderAsync();
+            if (folder is null || string.IsNullOrWhiteSpace(folder.Path)) return;
+            _config.Cache.OutputDirectory = folder.Path;
+            ConfigStore.Save(_config);
+            RefreshOutputUi();
+            StatusText.Text = "输出目录已设为：" + folder.Path;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "选择输出目录失败：" + ex.Message;
+        }
+    }
+
+    private void ResetOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (_config is null) return;
+        _config.Cache.OutputDirectory = "";
+        ConfigStore.Save(_config);
+        RefreshOutputUi();
+        StatusText.Text = "输出目录已恢复默认（源视频同目录）。";
     }
 
     private async void Choose_Click(object sender, RoutedEventArgs e)
@@ -76,17 +118,28 @@ public sealed partial class AiInterpolationView : UserControl
         try
         {
             var service = new AiInterpolationService();
+            var targetDir = string.IsNullOrWhiteSpace(_config.Cache.OutputDirectory)
+                ? null
+                : _config.Cache.OutputDirectory;
             var result = await service.InterpolateAsync(
                 _selectedPath, 30, factor,
                 (percent, message) => DispatcherQueue.TryEnqueue(() =>
                 {
                     ProgressBar.Value = Math.Clamp(percent, 0, 100);
                     StatusText.Text = message;
-                }), _cts.Token);
+                }), _cts.Token, targetDir);
 
-            var exported = AppStorage.ExportBesideSource(result.OutputPath,
-                _selectedPath, $"_AI{factor}x");
-            StatusText.Text = "完成，已输出到原视频目录：" + exported;
+            LibraryChanged?.Invoke(this, EventArgs.Empty);
+            if (targetDir is not null)
+            {
+                StatusText.Text = "完成，已输出到：" + result.OutputPath;
+            }
+            else
+            {
+                var exported = AppStorage.ExportBesideSource(result.OutputPath,
+                    _selectedPath, $"_AI{factor}x");
+                StatusText.Text = "完成，已输出到原视频目录：" + exported;
+            }
         }
         catch (OperationCanceledException)
         {

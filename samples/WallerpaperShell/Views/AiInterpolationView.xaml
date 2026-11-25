@@ -40,6 +40,28 @@
                         <ComboBoxItem Content="4×（30 → 120 fps）" Tag="4"/>
                     </ComboBox>
 
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="输出目录" FontSize="14" FontWeight="SemiBold"/>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="OutputDirText" IsReadOnly="True"
+                                     TextWrapping="NoWrap"
+                                     PlaceholderText="默认：源视频同目录"/>
+                            <Button Grid.Column="1" Content="更改…"
+                                    Click="PickOutput_Click"
+                                    AutomationProperties.Name="更改输出目录"/>
+                            <Button Grid.Column="2" Content="恢复默认"
+                                    Click="ResetOutput_Click"
+                                    AutomationProperties.Name="恢复默认输出目录"/>
+                        </Grid>
+                        <TextBlock x:Name="OutputHintText" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <Button x:Name="StartButton" Content="开始补帧"
                                 Click="Start_Click" IsEnabled="False"
