@@ -7,7 +7,7 @@
     xmlns:views="using:Wallerpaper.Shell.Views"
     Title="Wallerpaper">
 
-    <Grid  x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid  x:Name="Root" Background="{StaticResource AppPageBackgroundBrush}">
         <Grid.Resources>
             <ItemsPanelTemplate x:Key="DefaultGridPanel">
                 <ItemsWrapGrid Orientation="Horizontal"/>
@@ -23,8 +23,8 @@
                         <RowDefinition Height="150"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border CornerRadius="10" Background="#182030"
-                            BorderThickness="1" BorderBrush="#2A3446">
+                    <Border CornerRadius="10" Background="{StaticResource AppSurfaceBrush}"
+                            BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
                         <Image Source="{x:Bind Thumbnail, Mode=OneWay}"
                                DoubleTapped="WallpaperImage_DoubleTapped"
                                Stretch="UniformToFill"/>
@@ -45,8 +45,8 @@
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <Border CornerRadius="10" Background="#182030"
-                            BorderThickness="1" BorderBrush="#2A3446">
+                    <Border CornerRadius="10" Background="{StaticResource AppSurfaceBrush}"
+                            BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
                         <Image Source="{x:Bind Thumbnail, Mode=OneWay}"
                                Stretch="UniformToFill"/>
                     </Border>
@@ -60,11 +60,11 @@
                         <StackPanel Margin="12,4" Spacing="2">
                             <TextBlock Text="{x:Bind Title, Mode=OneWay}"
                                        FontWeight="SemiBold"
-                                       Foreground="#E610151F"
+                                       Foreground="{StaticResource AppTextBrush}"
                                        TextTrimming="CharacterEllipsis"/>
                             <TextBlock Text="{x:Bind Kind}"
                                        FontSize="11"
-                                       Foreground="#B310151F"/>
+                                       Foreground="{StaticResource AppTextSecondaryBrush}"/>
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -81,8 +81,8 @@
                         <RowDefinition Height="98"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border CornerRadius="8" Background="#182030"
-                            BorderThickness="1" BorderBrush="#2A3446">
+                    <Border CornerRadius="8" Background="{StaticResource AppSurfaceBrush}"
+                            BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
                         <Image Source="{x:Bind Thumbnail, Mode=OneWay}"
                                Stretch="UniformToFill"/>
                     </Border>
@@ -101,8 +101,10 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <Grid  x:Name="TitleBar" Height="48" Padding="16,0,8,0"
-              Background="{ThemeResource LayerFillColorDefaultBrush}">
+        <Border Background="{StaticResource AppSurfaceBrush}"
+                BorderBrush="{StaticResource AppBorderBrush}"
+                BorderThickness="0,0,0,1">
+        <Grid  x:Name="TitleBar" Height="48" Padding="16,0,8,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -165,13 +167,21 @@
                 </Button>
             </StackPanel>
         </Grid>
+        </Border>
 
         <NavigationView SelectionChanged="Nav_SelectionChanged" x:Name="Nav" Grid.Row="1"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
                         PaneDisplayMode="Left"
                         OpenPaneLength="220"
+                        Background="{StaticResource AppPageBackgroundBrush}"
                                                                >
+            <NavigationView.Resources>
+                <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
+                <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="#FFFFFFFF"/>
+                <SolidColorBrush x:Key="NavigationViewContentBackground" Color="{StaticResource AppPageBackgroundColor}"/>
+                <SolidColorBrush x:Key="TopNavigationViewItemForegroundSelected" Color="{StaticResource AppAccentColor}"/>
+            </NavigationView.Resources>
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="动态" Tag="Video">
                     <NavigationViewItem.Icon><SymbolIcon Symbol="Video"/></NavigationViewItem.Icon>
@@ -233,12 +243,12 @@
                                     AutomationProperties.Name="暂停所有壁纸"
                                     ToolTipService.ToolTip="暂停或恢复所有壁纸">
                     <NavigationViewItem.Resources>
-                        <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#22FFFFFF"/>
-                        <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="#33FFFFFF"/>
+                        <SolidColorBrush x:Key="NavigationViewItemBackgroundPointerOver" Color="#332F86D6"/>
+                        <SolidColorBrush x:Key="NavigationViewItemBackgroundPressed" Color="#552F86D6"/>
                         <SolidColorBrush x:Key="NavigationViewItemBackgroundSelected" Color="Transparent"/>
                     </NavigationViewItem.Resources>
-                    <Border Background="#40FFFFFF"
-                            BorderBrush="#66000000"
+                    <Border Background="{StaticResource AppSurfaceBrush}"
+                            BorderBrush="{StaticResource AppBorderBrush}"
                             BorderThickness="1"
                             CornerRadius="10"
                             Padding="14,6"
@@ -376,8 +386,8 @@
                                     <Grid  Width="236" Height="162" Margin="4"
                                                                                                  
                                                                                        >
-                                        <Border CornerRadius="10" Background="#182030"
-                                                BorderThickness="1" BorderBrush="#2A3446">
+                                        <Border CornerRadius="10" Background="{StaticResource AppSurfaceBrush}"
+                                                BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
                                             <Image Source="{x:Bind Thumbnail, Mode=OneWay}"
                                                    DoubleTapped="WallpaperImage_DoubleTapped"
                                                    Stretch="UniformToFill"/>
@@ -393,11 +403,11 @@
                                                 <TextBlock Text="{x:Bind Title, Mode=OneWay}"
                                                            DoubleTapped="WallpaperTitle_DoubleTapped"
                                                            FontWeight="SemiBold"
-                                                           Foreground="#E610151F"
+                                                           Foreground="{StaticResource AppTextBrush}"
                                                            TextTrimming="CharacterEllipsis"/>
                                                 <TextBlock Text="{x:Bind Kind}"
                                                            FontSize="11"
-                                                           Foreground="#B310151F"/>
+                                                           Foreground="{StaticResource AppTextSecondaryBrush}"/>
                                             </StackPanel>
                                         </Border>
                                     </Grid>
@@ -417,7 +427,7 @@
 
                 <!-- Wallpaper detail page -->
                 <Grid  x:Name="DetailPage" Visibility="Collapsed" Padding="24,18,20,20"
-                      Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+                      Background="{StaticResource AppPageBackgroundBrush}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
@@ -441,8 +451,8 @@
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <Border CornerRadius="12" Background="#10151F"
-                                    BorderThickness="1" BorderBrush="#2A3446">
+                            <Border CornerRadius="12" Background="{StaticResource AppSurfaceAltBrush}"
+                                    BorderThickness="1" BorderBrush="{StaticResource AppBorderBrush}">
                                 <Grid>
                                     <Image  x:Name="DetailPreviewImage" Stretch="Uniform"/>
                                     <MediaPlayerElement  x:Name="DetailPlayer"
@@ -464,7 +474,7 @@
                         </Grid>
 
                         <Border Grid.Column="1" Padding="20"
-                                CornerRadius="12" Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                CornerRadius="12" Background="{StaticResource AppSurfaceBrush}"
                                 BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                             <ScrollViewer>
                                 <StackPanel Spacing="16">
@@ -727,10 +737,10 @@
                 <TextBlock Text="白a茶出品"
                            FontSize="46"
                            FontWeight="SemiBold"
-                           Foreground="#1A1A1A"
+                           Foreground="{StaticResource AppTextBrush}"
                            HorizontalAlignment="Center"/>
                 <ProgressRing IsActive="True" Width="26" Height="26"
-                              Foreground="#2B579A"
+                              Foreground="{StaticResource AppAccentBrush}"
                               HorizontalAlignment="Center"
                               Margin="0,10,0,0"/>
             </StackPanel>

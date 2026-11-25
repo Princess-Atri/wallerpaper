@@ -19,20 +19,20 @@
 
                 <Border Width="236" Height="480"
                         CornerRadius="16"
-                        Background="#B31B1F26"
+                        Background="{StaticResource AppAccentFaintBrush}"
                         BorderThickness="1"
-                        BorderBrush="#44FFFFFF">
+                        BorderBrush="{StaticResource AppBorderBrush}">
                     <Grid>
                         <StackPanel VerticalAlignment="Center" Spacing="14"
                                     HorizontalAlignment="Center">
                             <FontIcon Glyph="&#xE8B7;" FontSize="46"
-                                      Foreground="#CCFFFFFF"/>
+                                      Foreground="{StaticResource AppTextSecondaryBrush}"/>
                             <TextBlock x:Name="SelectedFileText"
                                        Text="尚未选择视频"
                                        TextWrapping="Wrap"
                                        TextAlignment="Center"
                                        MaxWidth="190"
-                                       Foreground="#DDFFFFFF"/>
+                                       Foreground="{StaticResource AppTextBrush}"/>
                             <Button x:Name="ChooseButton"
                                     Content="选择视频"
                                     Click="Choose_Click"

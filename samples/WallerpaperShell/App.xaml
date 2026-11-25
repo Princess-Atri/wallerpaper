@@ -2,12 +2,41 @@
 <Application
     x:Class="Wallerpaper.Shell.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Light">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Light blue + white palette. Accent colours are overridden so
+                 the controls (selection, focus, toggle fill) match the
+                 wallpaper manager instead of the system accent. -->
+            <Color x:Key="SystemAccentColor">#FF2F86D6</Color>
+            <Color x:Key="SystemAccentColorLight1">#FF5AA3E4</Color>
+            <Color x:Key="SystemAccentColorLight2">#FF84BDF0</Color>
+            <Color x:Key="SystemAccentColorLight3">#FFB4D8F7</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF1F6FBA</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF155A9C</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF0F477C</Color>
+
+            <Color x:Key="AppAccentColor">#FF2F86D6</Color>
+            <Color x:Key="AppPageBackgroundColor">#FFE7F2FD</Color>
+            <Color x:Key="AppSurfaceColor">#FFFFFFFF</Color>
+            <Color x:Key="AppBorderColor">#FFCFE3F5</Color>
+            <SolidColorBrush x:Key="AppAccentBrush" Color="#FF2F86D6" />
+            <SolidColorBrush x:Key="AppAccentSoftBrush" Color="#FFDCEBFA" />
+            <SolidColorBrush x:Key="AppAccentFaintBrush" Color="#FFEFF7FF" />
+            <SolidColorBrush x:Key="AppPageBackgroundBrush" Color="#FFE7F2FD" />
+            <SolidColorBrush x:Key="AppSurfaceBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="AppSurfaceAltBrush" Color="#FFEDF6FF" />
+            <SolidColorBrush x:Key="AppBorderBrush" Color="#FFCFE3F5" />
+            <SolidColorBrush x:Key="AppBorderStrongBrush" Color="#FFB3D2EE" />
+            <SolidColorBrush x:Key="AppTextBrush" Color="#FF14324C" />
+            <SolidColorBrush x:Key="AppTextSecondaryBrush" Color="#FF5B7B97" />
+            <SolidColorBrush x:Key="AppNavHoverBrush" Color="#332F86D6" />
+            <SolidColorBrush x:Key="AppNavPressedBrush" Color="#552F86D6" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
