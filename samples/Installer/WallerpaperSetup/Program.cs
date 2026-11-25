@@ -127,6 +127,10 @@ internal static class Program
         var candidates = new[]
         {
             installDir,
+            // Some launchers start the setup with a restricted token; the folder
+            // the exe itself lives in is usually still writable (it was just
+            // extracted there by the user).
+            AppContext.BaseDirectory,
             Path.Combine(Environment.GetFolderPath(
                 Environment.SpecialFolder.LocalApplicationData), "BaiAcha", "staging"),
             Path.Combine(Path.GetTempPath(), "BaiAchaSetup")
@@ -152,7 +156,7 @@ internal static class Program
             }
         }
         throw new InvalidOperationException(
-            "找不到可写入的临时目录，安装无法继续：\n" + string.Join("\n", errors) +
+            "找不到可写入的临时目录，安装无法继续。\n" + "当前账户：" + Environment.UserName + "  程序目录：" + AppContext.BaseDirectory + "\n" + string.Join("\n", errors) +
             "\n请换一个安装位置（例如 C:\\Users\\<你>\\AppData\\Local\\Programs\\BaiAcha 或 D:\\BaiAcha）。");
     }
 
