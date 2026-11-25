@@ -111,7 +111,7 @@ public sealed class TrayIcon : IDisposable
     private string TipText()
     {
         var state = _isPaused() ? "已暂停" : "运行中";
-        return $"Wallerpaper · {state}";
+        return $"BaiAcha · {state}";
     }
 
     private NOTIFYICONDATA CreateData() => new()
@@ -162,7 +162,7 @@ public sealed class TrayIcon : IDisposable
         var menu = CreatePopupMenu();
         try
         {
-            AppendMenu(menu, MF_STRING, ID_SHOW, "打开 Wallerpaper");
+            AppendMenu(menu, MF_STRING, ID_SHOW, "打开 BaiAcha");
             AppendMenu(menu, MF_SEPARATOR, 0, null);
             AppendMenu(menu, MF_STRING, ID_TOGGLE, _isPaused() ? "播放壁纸" : "暂停壁纸");
 

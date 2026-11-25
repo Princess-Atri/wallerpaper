@@ -5267,7 +5267,7 @@ public sealed partial class MainWindow : Window
 		ContentDialogResult result = await new ContentDialog
 		{
 			Title = "删除壁纸",
-			Content = "“" + item.Title + "”要从 Wallerpaper 中删除吗？\n\n从库中移除：保留磁盘源文件\n同时删除源文件：永久删除主文件（不递归删除同目录素材）\n\n" + string.Join("\n", sourcePaths),
+			Content = "“" + item.Title + "”要从 BaiAcha 中删除吗？\n\n从库中移除：保留磁盘源文件\n同时删除源文件：永久删除主文件（不递归删除同目录素材）\n\n" + string.Join("\n", sourcePaths),
 			PrimaryButtonText = "从库中移除",
 			SecondaryButtonText = "同时删除源文件",
 			CloseButtonText = "取消",

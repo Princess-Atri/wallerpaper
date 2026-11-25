@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Wallerpaper.Shell.Models"
     xmlns:views="using:Wallerpaper.Shell.Views"
-    Title="Wallerpaper">
+    Title="BaiAcha">
 
     <Grid  x:Name="Root" Background="{StaticResource AppPageBackgroundBrush}">
         <Grid.Resources>
@@ -112,7 +112,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="10">
                 <FontIcon Glyph="&#xE7F4;" FontSize="18"/>
-                <TextBlock Text="WALLERPAPER" FontWeight="SemiBold" CharacterSpacing="120"/>
+                <TextBlock Text="BaiAcha" FontWeight="SemiBold" CharacterSpacing="40"/>
                 <Border Background="{ThemeResource AccentFillColorDefaultBrush}"
                         CornerRadius="10" Padding="8,2">
                     <TextBlock Text="BETA" FontSize="10" Foreground="White"/>
@@ -734,10 +734,14 @@
               Grid.RowSpan="2">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                         Spacing="10">
-                <TextBlock Text="白a茶出品"
+                <TextBlock Text="BaiAcha"
                            FontSize="46"
                            FontWeight="SemiBold"
                            Foreground="{StaticResource AppTextBrush}"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="白a茶出品"
+                           FontSize="14"
+                           Foreground="{StaticResource AppTextSecondaryBrush}"
                            HorizontalAlignment="Center"/>
                 <ProgressRing IsActive="True" Width="26" Height="26"
                               Foreground="{StaticResource AppAccentBrush}"
