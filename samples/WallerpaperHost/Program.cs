@@ -62,14 +62,14 @@ internal static class Program
                     break;
                 case "--help":
                 case "-h":
-                    Console.WriteLine("WallerpaperHost --config scheduler.json [--seconds N] [--force-battery] [--test-fallback]");
+                    Console.WriteLine("BaiAchaHost --config scheduler.json [--seconds N] [--force-battery] [--test-fallback]");
                     return 0;
             }
         }
 
-        AppLog.Initialize("WallerpaperHost");
-        CrashReporter.Install("WallerpaperHost");
-        AppLog.Info("WallerpaperHost starting");
+        AppLog.Initialize("BaiAchaHost");
+        CrashReporter.Install("BaiAchaHost");
+        AppLog.Info("BaiAchaHost starting");
         SetProcessDpiAwarenessContext(new IntPtr(-4));
         Console.CancelKeyPress += (_, e) =>
         {

@@ -28,7 +28,7 @@ using Wallerpaper.Shell.Services;
 using Wallerpaper.Shell.Views;
 using WinRT;
 using WinRT.Interop;
-using WinRT.WallerpaperShellVtableClasses;
+using WinRT.BaiAchaVtableClasses;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Media.Core;
@@ -830,7 +830,7 @@ public sealed partial class MainWindow : Window
 			await new ContentDialog
 			{
 				Title = "没有找到视频",
-				Content = "本机没有找到文件名包含“" + query + "”的视频。\n可以尝试添加文件夹，或把视频放到“视频\\Wallerpaper”目录。",
+				Content = "本机没有找到文件名包含“" + query + "”的视频。\n可以尝试添加文件夹，或把视频放到“视频\\BaiAcha”目录。",
 				CloseButtonText = "知道了",
 				XamlRoot = Content.XamlRoot
 			}.ShowAsync();

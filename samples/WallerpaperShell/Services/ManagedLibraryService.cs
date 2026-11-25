@@ -16,14 +16,14 @@ public static class ManagedLibraryService
             // Keep the copied wallpapers beside the D: software folder, not
             // in the C: user profile. WALLERPAPER_LIBRARY can override this
             // for portable installations.
-            var overridePath = Environment.GetEnvironmentVariable("WALLERPAPER_LIBRARY");
+            var overridePath = Environment.GetEnvironmentVariable("BAIACHA_LIBRARY") ?? Environment.GetEnvironmentVariable("WALLERPAPER_LIBRARY");
             if (!string.IsNullOrWhiteSpace(overridePath))
                 return Path.GetFullPath(overridePath);
 
             var appFolder = @"D:\Desktop\wallerpaper c";
             if (Directory.Exists(appFolder))
                 return Path.Combine(appFolder, "library");
-            return @"D:\Wallerpaper\library";
+            return @"D:\BaiAcha\library";
         }
     }
 

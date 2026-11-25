@@ -9,7 +9,7 @@ namespace Wallerpaper.Diagnostics;
 public static class AppLog
 {
     private static readonly object Gate = new();
-    private static string _app = "Wallerpaper";
+    private static string _app = "BaiAcha";
     private static string _directory = "";
     private static string _file = "";
     private static long _maxBytes = 10 * 1024 * 1024;
@@ -25,7 +25,7 @@ public static class AppLog
             _app = Sanitize(appName);
             _directory = directory ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "logs");
+                "BaiAcha", "logs");
 
             try
             {
@@ -37,7 +37,7 @@ public static class AppLog
                 // Low-integrity/read-only environments: fall back to temp.
                 try
                 {
-                    _directory = Path.Combine(Path.GetTempPath(), "Wallerpaper", "logs");
+                    _directory = Path.Combine(Path.GetTempPath(), "BaiAcha", "logs");
                     System.IO.Directory.CreateDirectory(_directory);
                     System.IO.Directory.CreateDirectory(DumpDirectory);
                 }

@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using System.Threading;
 using Wallerpaper.Diagnostics;
+using Wallerpaper.Shell.Services;
 
 namespace Wallerpaper.Shell;
 
@@ -15,11 +16,11 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
-        AppLog.Initialize("WallerpaperShell");
-        CrashReporter.Install("WallerpaperShell");
-        AppLog.Info($"WallerpaperShell starting {Environment.ProcessPath}");
+        AppLog.Initialize("BaiAcha");
+        CrashReporter.Install("BaiAcha");
+        AppLog.Info($"BaiAcha starting {Environment.ProcessPath}");
 
-        _singleInstance = new Mutex(true, @"Local\WallerpaperShell", out var createdNew);
+        _singleInstance = new Mutex(true, @"Local\BaiAcha", out var createdNew);
         if (!createdNew)
         {
             try
@@ -37,10 +38,10 @@ public partial class App : Application
         }
         if (!_ownsSingleInstance)
         {
-            AppLog.Info("another WallerpaperShell instance already owns the mutex");
+            AppLog.Info("another BaiAcha instance already owns the mutex");
             try
             {
-                _showEvent = EventWaitHandle.OpenExisting(@"Local\WallerpaperShell.Show");
+                _showEvent = EventWaitHandle.OpenExisting(@"Local\BaiAcha.Show");
                 _signalExisting = _showEvent.Set();
             }
             catch
@@ -51,7 +52,7 @@ public partial class App : Application
         else
         {
             _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset,
-                @"Local\WallerpaperShell.Show");
+                @"Local\BaiAcha.Show");
             var thread = new Thread(() =>
             {
                 while (true)
@@ -67,7 +68,7 @@ public partial class App : Application
             })
             {
                 IsBackground = true,
-                Name = "WallerpaperShell-activation"
+                Name = "BaiAcha-activation"
             };
             thread.Start();
         }
@@ -96,6 +97,7 @@ public partial class App : Application
         }
         var minimized = Environment.GetCommandLineArgs()
             .Any(x => x.Equals("--minimized", StringComparison.OrdinalIgnoreCase));
+        AutostartService.MigrateLegacy();
         AppLog.Info($"OnLaunched minimized={minimized}");
         MainWindow = new MainWindow(minimized);
         // Activating a minimized launch would paint the manager window on the

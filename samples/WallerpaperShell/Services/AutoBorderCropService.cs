@@ -45,7 +45,7 @@ public sealed class AutoBorderCropService
         var ffmpegEncode = AiInterpolationService.FindFfmpegEncode()
             ?? throw new InvalidOperationException("未找到编码用 FFmpeg。");
 
-        var work = Path.Combine(Path.GetTempPath(), "WallerpaperAutoCrop",
+        var work = Path.Combine(Path.GetTempPath(), "BaiAchaAutoCrop",
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
         try

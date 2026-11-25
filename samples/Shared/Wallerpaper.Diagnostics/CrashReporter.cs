@@ -15,7 +15,7 @@ public static class CrashReporter
     private const uint MiniDumpWithTokenInformation = 0x00010000;
 
     private static readonly object Gate = new();
-    private static string _app = "Wallerpaper";
+    private static string _app = "BaiAcha";
     private static int _dumping;
     private static NativeFilter? _nativeFilter;
 

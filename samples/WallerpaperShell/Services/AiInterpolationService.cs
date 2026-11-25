@@ -30,7 +30,7 @@ public sealed class AiInterpolationService
         {
             var local = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "ai-tools");
+                "BaiAcha", "ai-tools");
             if (Directory.Exists(local))
                 return local;
             var beside = Path.Combine(AppContext.BaseDirectory, "ai-tools");
@@ -89,7 +89,7 @@ public sealed class AiInterpolationService
         var roots = new[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "ai-tools"),
+                "BaiAcha", "ai-tools"),
             Path.Combine(AppContext.BaseDirectory, "ai-tools"),
             @"D:\Desktop\wallerpaper c\tools\ai"
         };
@@ -114,18 +114,18 @@ public sealed class AiInterpolationService
             sourceFps = 30;
 
         var rife = FindRife() ?? throw new InvalidOperationException(
-            "未找到 rife-ncnn-vulkan.exe。请把 RIFE 放到 Wallerpaper\\ai-tools。");
+            "未找到 rife-ncnn-vulkan.exe。请把 RIFE 放到 BaiAcha\\ai-tools。");
         var ffmpegFrames = FindFfmpegFrames() ?? throw new InvalidOperationException(
-            "未找到拆帧用 FFmpeg。请把 ffmpeg-frames.exe 放到 Wallerpaper\\ai-tools。");
+            "未找到拆帧用 FFmpeg。请把 ffmpeg-frames.exe 放到 BaiAcha\\ai-tools。");
         var ffmpegEncode = FindFfmpegEncode() ?? throw new InvalidOperationException(
-            "未找到 H.264 编码用 FFmpeg。请把 ffmpeg-encode.exe 放到 Wallerpaper\\ai-tools。");
+            "未找到 H.264 编码用 FFmpeg。请把 ffmpeg-encode.exe 放到 BaiAcha\\ai-tools。");
         var modelDir = Path.Combine(Path.GetDirectoryName(rife)!, "rife-v4.6");
         if (!Directory.Exists(modelDir))
             throw new InvalidOperationException("未找到 RIFE 模型 rife-v4.6。");
 
         var targetFps = sourceFps * factor;
         var started = Stopwatch.StartNew();
-        var workDir = Path.Combine(Path.GetTempPath(), "WallerpaperAI", Guid.NewGuid().ToString("N"));
+        var workDir = Path.Combine(Path.GetTempPath(), "BaiAchaAI", Guid.NewGuid().ToString("N"));
         var framesDir = Path.Combine(workDir, "frames");
         var outputFramesDir = Path.Combine(workDir, "out");
         var audioPath = Path.Combine(workDir, "audio.m4a");

@@ -69,7 +69,7 @@ public sealed class TrayIcon : IDisposable
         // participate in SetForegroundWindow, which is required for reliable
         // dismissal when the user clicks elsewhere.
         _hwnd = CreateWindowEx(0x00000080 /* WS_EX_TOOLWINDOW */, "STATIC",
-            "WallerpaperTray", unchecked((int)0x80000000) /* WS_POPUP */,
+            "BaiAchaTray", unchecked((int)0x80000000) /* WS_POPUP */,
             0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, GetModuleHandle(null), IntPtr.Zero);
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException("Cannot create tray message window.");

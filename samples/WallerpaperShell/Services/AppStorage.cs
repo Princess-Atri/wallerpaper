@@ -10,11 +10,11 @@ public static class AppStorage
     {
         get
         {
-            var overridePath = Environment.GetEnvironmentVariable("WALLERPAPER_ROOT");
+            var overridePath = Environment.GetEnvironmentVariable("BAIACHA_ROOT") ?? Environment.GetEnvironmentVariable("WALLERPAPER_ROOT");
             if (!string.IsNullOrWhiteSpace(overridePath))
                 return Path.GetFullPath(overridePath);
             var d = @"D:\Desktop\wallerpaper c";
-            return Directory.Exists(d) ? d : @"D:\Wallerpaper";
+            return Directory.Exists(d) ? d : @"D:\BaiAcha";
         }
     }
 

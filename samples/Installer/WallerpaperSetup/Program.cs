@@ -4,338 +4,471 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
-namespace Wallerpaper.Setup;
+namespace BaiAcha.Setup;
 
 internal static class Program
 {
-    private const string ProductName = "Wallerpaper";
-    private const string Version = "0.7.0";
-    private const string RunValue = "WallerpaperShell";
+    private const string ProductName = "BaiAcha";
+    private const string DisplayName = "BaiAcha 动态壁纸管理器";
+    private const string Version = "1.0.0";
+    private const string RunValue = "BaiAcha";
+    private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BaiAcha";
+    private const string LegacyProduct = "Wallerpaper";
 
-    private static string InstallDir => Path.Combine(
+    private static readonly string[] AppProcesses =
+    {
+        "BaiAcha", "BaiAchaHost", "BaiAchaSceneHost", "BaiAchaVideoHost", "BaiAchaWebHost",
+        "WallerpaperShell", "WallerpaperHost", "SceneWallpaperHost", "VideoWallpaperHost", "WebWallpaperHost"
+    };
+
+    private static string DefaultInstallDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Programs", ProductName);
 
-    private static string DataDir => Path.Combine(
+    private static string LegacyInstallDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        ProductName);
+        "Programs", LegacyProduct);
 
     [STAThread]
     private static int Main(string[] args)
     {
+        var silent = Has(args, "--silent") || Has(args, "-s");
+        _silent = silent;
+        var uninstall = Has(args, "--uninstall");
+        var noLaunch = Has(args, "--no-launch");
+        var noShortcut = Has(args, "--no-shortcut");
+        var autostart = !Has(args, "--no-autostart");
+        var dirArg = args.FirstOrDefault(a => a.StartsWith("--install-dir=", StringComparison.OrdinalIgnoreCase));
+        var installDir = dirArg is null ? DefaultInstallDir : dirArg["--install-dir=".Length..].Trim('"');
+
+        if (uninstall)
+            return Uninstall(installDir);
+
+        if (silent)
+        {
+            var code = Install(installDir, new InstallOptions(autostart, !noShortcut,
+                !noLaunch, Directory.Exists(LegacyInstallDir)));
+            if (code != 0)
+                Console.Error.WriteLine(ReadLog());
+            return code;
+        }
+
+        ApplicationConfiguration.Initialize();
+        Application.Run(new SetupForm(installDir, silent: false));
+        return 0;
+    }
+
+    private static bool Has(string[] args, string name)
+        => args.Any(a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "BaiAcha", "setup.log");
+    private static bool _silent;
+
+    internal static void Log(string message)
+    {
+        foreach (var path in new[]
+                 {
+                     LogPath,
+                     Path.Combine(AppContext.BaseDirectory, "BaiAchaSetup.log")
+                 })
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.AppendAllText(path,
+                    $"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+                return;
+            }
+            catch { }
+        }
+    }
+
+    internal static string ReadLog()
+    {
+        foreach (var path in new[]
+                 {
+                     LogPath,
+                     Path.Combine(AppContext.BaseDirectory, "BaiAchaSetup.log")
+                 })
+        {
+            try { if (File.Exists(path)) return File.ReadAllText(path); } catch { }
+        }
+        return "(no log)";
+    }
+
+    internal static void Fail(string title, Exception ex)
+    {
+        Log(title + ": " + ex);
+        if (_silent)
+        {
+            try { Console.Error.WriteLine(title + ": " + ex); } catch { }
+            try
+            {
+                File.AppendAllText(
+                    Path.Combine(AppContext.BaseDirectory, "BaiAchaSetup.error.log"),
+                    $"[{DateTime.Now:HH:mm:ss}] {title}: {ex}{Environment.NewLine}");
+            }
+            catch { }
+            return;
+        }
+        MessageBox.Show($"{title}: {ex.Message}", ProductName, MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+    }
+
+    internal sealed record InstallOptions(bool Autostart, bool Shortcuts, bool Launch, bool RemoveLegacy);
+
+    internal static int Install(string installDir, InstallOptions options)
+    {
         try
         {
-            var uninstall = args.Any(a => a.Equals("--uninstall", StringComparison.OrdinalIgnoreCase));
-            var fromTemp = args.Any(a => a.Equals("--from-temp", StringComparison.OrdinalIgnoreCase));
-            var noLaunch = args.Any(a => a.Equals("--no-launch", StringComparison.OrdinalIgnoreCase));
-            var custom = args.FirstOrDefault(a => a.StartsWith("--install-dir=", StringComparison.OrdinalIgnoreCase));
-            var installDir = custom is null ? InstallDir : custom["--install-dir=".Length..];
+            StopProcesses();
+            // Stage inside the install directory itself: creating folders at a
+            // drive root or in %TEMP% can be denied by security software, while
+            // the install target is by definition writable.
+            Directory.CreateDirectory(installDir);
+            var staging = Path.Combine(installDir,
+                ".staging-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(staging);
+            try
+            {
+                using (var payload = Assembly.GetExecutingAssembly()
+                           .GetManifestResourceStream("payload.zip")
+                       ?? throw new InvalidOperationException(
+                           "安装包缺少 payload.zip；请用 tools/build-release.ps1 重新打包。"))
+                using (var zip = new ZipArchive(payload, ZipArchiveMode.Read))
+                    zip.ExtractToDirectory(staging, overwriteFiles: true);
 
-            return uninstall
-                ? Uninstall(installDir, fromTemp)
-                : Install(installDir, noLaunch);
+                Directory.CreateDirectory(installDir);
+                foreach (var file in Directory.EnumerateFiles(staging, "*", SearchOption.AllDirectories))
+                {
+                    var rel = Path.GetRelativePath(staging, file);
+                    var target = Path.Combine(installDir, rel);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    File.Copy(file, target, overwrite: true);
+                }
+            }
+            finally
+            {
+                try { Directory.Delete(staging, recursive: true); } catch { }
+            }
+
+            var eula = ReadEula();
+            File.WriteAllText(Path.Combine(installDir, "用户协议.txt"), eula);
+
+            WriteUninstallInfo(installDir);
+            if (options.Shortcuts)
+            {
+                CreateShortcut(Path.Combine(Environment.GetFolderPath(
+                        Environment.SpecialFolder.Programs), "BaiAcha.lnk"),
+                    Path.Combine(installDir, "BaiAcha.exe"), installDir);
+                CreateShortcut(Path.Combine(Environment.GetFolderPath(
+                        Environment.SpecialFolder.DesktopDirectory), "BaiAcha.lnk"),
+                    Path.Combine(installDir, "BaiAcha.exe"), installDir);
+            }
+
+            var exe = Path.Combine(installDir, "BaiAcha.exe");
+            if (options.Autostart && File.Exists(exe))
+            {
+                using var run = Registry.CurrentUser.CreateSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                run.SetValue(RunValue, $"\"{exe}\" --minimized");
+                run.DeleteValue("WallerpaperShell", throwOnMissingValue: false);
+            }
+
+            if (options.RemoveLegacy && Directory.Exists(LegacyInstallDir))
+                TryDeleteTree(LegacyInstallDir);
+
+            if (options.Launch && File.Exists(exe))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = exe,
+                    WorkingDirectory = installDir,
+                    UseShellExecute = true
+                });
+            }
+
+            return 0;
         }
         catch (Exception ex)
         {
-            Trace("FATAL: " + ex);
-            MessageBox($"Wallerpaper 安装程序失败：\n{ex.Message}", "Wallerpaper", 0x10);
+            Fail("安装失败", ex);
             return 1;
         }
     }
 
-    private static int Install(string installDir, bool noLaunch)
+    internal static int Uninstall(string installDir)
     {
-        using var payload = Assembly.GetExecutingAssembly()
-            .GetManifestResourceStream("payload.zip")
-            ?? throw new InvalidOperationException("payload.zip missing; rebuild with tools/build-release.ps1.");
-
-        StopProcesses();
-        var temp = CreateStagingDirectory(installDir);
         try
         {
-            using (var zip = new ZipArchive(payload, ZipArchiveMode.Read))
-                zip.ExtractToDirectory(temp, overwriteFiles: true);
-
-            if (Directory.Exists(installDir))
-                TryDelete(installDir);
-            Directory.CreateDirectory(installDir);
-            CopyDirectory(temp, installDir);
-
-            var self = Environment.ProcessPath
-                ?? throw new InvalidOperationException("Cannot resolve setup executable.");
-            File.Copy(self, Path.Combine(installDir, "WallerpaperSetup.exe"), overwrite: true);
-
-            try
+            StopProcesses();
+            using (var run = Registry.CurrentUser.OpenSubKey(
+                       @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true))
             {
-                CreateShortcuts(installDir);
-                Trace("shortcuts created");
+                run?.DeleteValue(RunValue, throwOnMissingValue: false);
+                run?.DeleteValue("WallerpaperShell", throwOnMissingValue: false);
             }
-            catch (Exception ex)
-            {
-                // A locked corporate desktop must not block the install; the
-                // Start Menu/desktop shortcut is optional.
-                Trace("shortcut failed: " + ex);
-            }
-
-            try
-            {
-                WriteUninstallRegistry(installDir);
-                Trace("uninstall registry written");
-            }
-            catch (Exception ex)
-            {
-                // Restricted/Low-integrity launches can read but not write the
-                // Uninstall key. The app is still usable; report it but do not
-                // fail the entire installation.
-                Trace("uninstall registry failed: " + ex);
-            }
-
-            try
-            {
-                WriteRunKey(installDir);
-                Trace("run key written");
-            }
-            catch (Exception ex)
-            {
-                Trace("run key failed: " + ex);
-            }
-
-            if (!noLaunch)
-            {
-                var exe = Path.Combine(installDir, "WallerpaperShell.exe");
-                if (File.Exists(exe))
-                    Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = installDir });
-            }
+            Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false);
+            TryDelete(Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.Programs), "BaiAcha.lnk"));
+            TryDelete(Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.DesktopDirectory), "BaiAcha.lnk"));
+            TryDeleteTree(installDir);
             return 0;
         }
-        finally
+        catch (Exception ex)
         {
-            TryDelete(temp);
+            Fail("卸载失败", ex);
+            return 1;
         }
     }
 
-    private static int Uninstall(string installDir, bool fromTemp)
+    internal static string ReadEula()
     {
-        StopProcesses();
-        RemoveRunKey();
-        RemoveUninstallRegistry();
-        RemoveShortcuts();
-
-        var current = Environment.ProcessPath ?? "";
-        if (!fromTemp && current.StartsWith(installDir, StringComparison.OrdinalIgnoreCase))
+        try
         {
-            // The uninstaller cannot delete its own install directory while running.
-            var temp = Path.Combine(Path.GetTempPath(),
-                "WallerpaperUninstall-" + Guid.NewGuid().ToString("N") + ".exe");
-            File.Copy(current, temp, overwrite: true);
-            Process.Start(new ProcessStartInfo(temp,
-                $"--uninstall --from-temp --install-dir=\"{installDir}\"")
-            {
-                UseShellExecute = false
-            });
-            return 0;
+            using var stream = Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("EULA.txt");
+            if (stream is null) return "（安装包内未包含用户协议）";
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8);
+            return reader.ReadToEnd();
         }
-
-        TryDelete(installDir);
-        TryDelete(DataDir);
-
-        if (Directory.Exists(installDir))
+        catch
         {
-            // A renderer/Host may still be shutting down; schedule a final
-            // out-of-process cleanup so the install directory cannot remain.
-            Process.Start(new ProcessStartInfo("cmd.exe",
-                $"/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"{installDir}\"")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
+            return "（读取用户协议失败）";
         }
-
-        if (fromTemp && File.Exists(current))
-        {
-            Process.Start(new ProcessStartInfo("cmd.exe",
-                $"/c ping 127.0.0.1 -n 3 >nul & del /f /q \"{current}\"")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-        }
-        return 0;
     }
 
-    private static void WriteRunKey(string installDir)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-        key.SetValue(RunValue,
-            $"\"{Path.Combine(installDir, "WallerpaperShell.exe")}\" --minimized");
-    }
+    internal static string InstalledVersion => Version;
 
-    private static void RemoveRunKey()
+    private static void WriteUninstallInfo(string installDir)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(
-            @"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-        key?.DeleteValue(RunValue, throwOnMissingValue: false);
-    }
-
-    private static void WriteUninstallRegistry(string installDir)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(
-            $@"Software\Microsoft\Windows\CurrentVersion\Uninstall\{ProductName}", writable: true);
-        key.SetValue("DisplayName", "Wallerpaper");
+        using var key = Registry.CurrentUser.CreateSubKey(UninstallKey, writable: true);
+        if (key is null) return;
+        key.SetValue("DisplayName", DisplayName);
         key.SetValue("DisplayVersion", Version);
-        key.SetValue("Publisher", "Wallerpaper");
         key.SetValue("InstallLocation", installDir);
-        key.SetValue("DisplayIcon", Path.Combine(installDir, "WallerpaperShell.exe"));
-        key.SetValue("UninstallString",
-            $"\"{Path.Combine(installDir, "WallerpaperSetup.exe")}\" --uninstall --install-dir=\"{installDir}\"");
+        key.SetValue("Publisher", ProductName);
+        key.SetValue("UninstallString", $"\"{Path.Combine(installDir, "BaiAchaSetup.exe")}\" --uninstall");
         key.SetValue("NoModify", 1, RegistryValueKind.DWord);
         key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
     }
 
-    private static void RemoveUninstallRegistry()
+    internal static void StopProcesses()
     {
-        Registry.CurrentUser.DeleteSubKeyTree(
-            $@"Software\Microsoft\Windows\CurrentVersion\Uninstall\{ProductName}",
-            throwOnMissingSubKey: false);
-    }
-
-    private static void CreateShortcuts(string installDir)
-    {
-        var target = Path.Combine(installDir, "WallerpaperShell.exe");
-        CreateShortcut(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            "Wallerpaper.lnk"), target, installDir);
-        CreateShortcut(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
-            "Programs", "Wallerpaper.lnk"), target, installDir);
-    }
-
-    private static void CreateShortcut(string path, string target, string workingDirectory)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var type = Type.GetTypeFromProgID("WScript.Shell")
-            ?? throw new InvalidOperationException("WScript.Shell unavailable.");
-        dynamic shell = Activator.CreateInstance(type)!;
-        dynamic shortcut = shell.CreateShortcut(path);
-        shortcut.TargetPath = target;
-        shortcut.WorkingDirectory = workingDirectory;
-        shortcut.IconLocation = target + ",0";
-        shortcut.Description = "Wallerpaper 动态壁纸";
-        shortcut.Save();
-    }
-
-    private static void RemoveShortcuts()
-    {
-        TryDelete(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            "Wallerpaper.lnk"));
-        TryDelete(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
-            "Programs", "Wallerpaper.lnk"));
-    }
-
-    private static void StopProcesses()
-    {
-        for (var attempt = 0; attempt < 3; attempt++)
+        foreach (var name in AppProcesses)
         {
-            var any = false;
-            foreach (var name in new[]
-                     {
-                         "WallerpaperShell", "WallerpaperHost", "SceneWallpaperHost",
-                         "VideoWallpaperHost", "WebWallpaperHost"
-                     })
+            foreach (var p in Process.GetProcessesByName(name))
             {
-                foreach (var p in Process.GetProcessesByName(name))
+                try
                 {
-                    any = true;
-                    try { p.Kill(entireProcessTree: true); p.WaitForExit(3000); }
-                    catch { }
+                    p.CloseMainWindow();
+                    if (!p.WaitForExit(1500))
+                        p.Kill(entireProcessTree: true);
                 }
+                catch { }
+                finally { p.Dispose(); }
             }
-            if (!any) break;
-            Thread.Sleep(700);
         }
     }
 
-    private static string CreateStagingDirectory(string installDir)
+    private static void CreateShortcut(string linkPath, string target, string workDir)
     {
-        var candidates = new[]
+        try
         {
-            Path.Combine(Path.GetTempPath(),
-                "WallerpaperSetup-" + Guid.NewGuid().ToString("N")),
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "setup-" + Guid.NewGuid().ToString("N")),
-            installDir.TrimEnd('\\') + ".setup-" + Guid.NewGuid().ToString("N")
-        };
-
-        var errors = new List<string>();
-        foreach (var candidate in candidates)
-        {
-            try
-            {
-                Directory.CreateDirectory(candidate);
-                Trace("staging=" + candidate);
-                return candidate;
-            }
-            catch (Exception ex)
-            {
-                errors.Add($"{candidate}: {ex.Message}");
-            }
+            Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
+            var type = Type.GetTypeFromProgID("WScript.Shell");
+            if (type is null) return;
+            dynamic shell = Activator.CreateInstance(type)!;
+            dynamic shortcut = shell.CreateShortcut(linkPath);
+            shortcut.TargetPath = target;
+            shortcut.WorkingDirectory = workDir;
+            shortcut.IconLocation = target + ",0";
+            shortcut.Description = DisplayName;
+            shortcut.Save();
+            Marshal.ReleaseComObject(shortcut);
+            Marshal.ReleaseComObject(shell);
         }
-        throw new IOException(
-            "无法创建安装临时目录。\n\n" +
-            "如果安装器是从 DSH、Agent、沙箱或文件预览卡片启动的，请先把安装包复制到桌面或下载目录，" +
-            "再用文件资源管理器双击运行；不要从受限终端启动。\n\n" +
-            string.Join("\n", errors));
-    }
-
-    private static void CopyDirectory(string source, string target)
-    {
-        foreach (var dir in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, dir)));
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        catch
         {
-            var dest = Path.Combine(target, Path.GetRelativePath(source, file));
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            File.Copy(file, dest, overwrite: true);
+            // Shortcuts are a convenience; never fail the install over them.
         }
     }
 
     private static void TryDelete(string path)
     {
-        for (var attempt = 0; attempt < 6; attempt++)
-        {
-            try
-            {
-                if (Directory.Exists(path))
-                    Directory.Delete(path, recursive: true);
-                else if (File.Exists(path))
-                    File.Delete(path);
-                return;
-            }
-            catch
-            {
-                Thread.Sleep(500);
-            }
-        }
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
-    private static void Trace(string message)
+    internal static void TryDeleteTree(string dir)
     {
-        try
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+    }
+}
+
+internal sealed class SetupForm : Form
+{
+    private readonly TextBox _license = new();
+    private readonly CheckBox _agree = new();
+    private readonly TextBox _path = new();
+    private readonly CheckBox _autostart = new();
+    private readonly CheckBox _shortcut = new();
+    private readonly CheckBox _launch = new();
+    private readonly CheckBox _removeLegacy = new();
+    private readonly Button _install = new();
+    private readonly Button _cancel = new();
+    private readonly ProgressBar _progress = new();
+    private readonly Label _status = new();
+
+    public SetupForm(string installDir, bool silent)
+    {
+        Text = $"BaiAcha {Program.InstalledVersion} 安装程序";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(640, 620);
+        Font = new Font("Segoe UI", 9f);
+        _ = silent;
+
+        var title = new Label
         {
-            var baseDir = Path.GetDirectoryName(Environment.ProcessPath) ?? ".";
-            File.AppendAllText(Path.Combine(baseDir, "WallerpaperSetup.log"),
-                $"{DateTime.Now:O} {message}\n");
-        }
-        catch { }
+            Text = "BaiAcha 动态壁纸管理器",
+            Font = new Font("Segoe UI", 16f, FontStyle.Bold),
+            AutoSize = true,
+            Location = new Point(20, 16)
+        };
+        var subtitle = new Label
+        {
+            Text = $"版本 {Program.InstalledVersion} · 安装前请阅读并同意用户协议",
+            AutoSize = true,
+            ForeColor = Color.DimGray,
+            Location = new Point(22, 52)
+        };
+
+        _license.Multiline = true;
+        _license.ReadOnly = true;
+        _license.ScrollBars = ScrollBars.Vertical;
+        _license.Location = new Point(22, 80);
+        _license.Size = new Size(596, 300);
+        _license.Text = Program.ReadEula();
+
+        _agree.Text = "我已阅读并同意《BaiAcha 用户协议》";
+        _agree.AutoSize = true;
+        _agree.Location = new Point(22, 392);
+        _agree.CheckedChanged += (_, _) => UpdateEnabled();
+
+        var pathLabel = new Label
+        {
+            Text = "安装位置",
+            AutoSize = true,
+            Location = new Point(22, 424)
+        };
+        _path.Location = new Point(22, 446);
+        _path.Size = new Size(500, 26);
+        _path.Text = installDir;
+        var browse = new Button
+        {
+            Text = "浏览…",
+            Location = new Point(530, 445),
+            Size = new Size(88, 28)
+        };
+        browse.Click += (_, _) =>
+        {
+            using var dialog = new FolderBrowserDialog
+            {
+                Description = "选择 BaiAcha 的安装位置",
+                SelectedPath = Directory.Exists(_path.Text) ? _path.Text : installDir
+            };
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+                _path.Text = dialog.SelectedPath;
+        };
+
+        _autostart.Text = "开机自动启动（--minimized 静默进托盘）";
+        _autostart.AutoSize = true;
+        _autostart.Checked = true;
+        _autostart.Location = new Point(22, 484);
+
+        _shortcut.Text = "创建桌面与开始菜单快捷方式";
+        _shortcut.AutoSize = true;
+        _shortcut.Checked = true;
+        _shortcut.Location = new Point(22, 508);
+
+        _launch.Text = "安装完成后运行 BaiAcha";
+        _launch.AutoSize = true;
+        _launch.Checked = true;
+        _launch.Location = new Point(22, 532);
+
+        _removeLegacy.Text = "删除旧版 Wallerpaper 安装目录与自启动项";
+        _removeLegacy.AutoSize = true;
+        _removeLegacy.Checked = Directory.Exists(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs", "Wallerpaper"));
+        _removeLegacy.Location = new Point(22, 556);
+
+        _progress.Location = new Point(22, 586);
+        _progress.Size = new Size(440, 12);
+
+        _status.Text = "等待安装";
+        _status.AutoSize = true;
+        _status.ForeColor = Color.DimGray;
+        _status.Location = new Point(22, 600);
+
+        _install.Text = "安装";
+        _install.Location = new Point(470, 580);
+        _install.Size = new Size(72, 30);
+        _install.Click += (_, _) => RunInstall();
+
+        _cancel.Text = "取消";
+        _cancel.Location = new Point(548, 580);
+        _cancel.Size = new Size(72, 30);
+        _cancel.Click += (_, _) => Close();
+
+        Controls.AddRange(new Control[]
+        {
+            title, subtitle, _license, _agree, pathLabel, _path, browse,
+            _autostart, _shortcut, _launch, _removeLegacy, _progress, _status,
+            _install, _cancel
+        });
+        UpdateEnabled();
     }
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int MessageBoxW(IntPtr hwnd, string text, string caption, uint type);
+    private void UpdateEnabled() => _install.Enabled = _agree.Checked && !string.IsNullOrWhiteSpace(_path.Text);
 
-    private static void MessageBox(string text, string caption, uint type) =>
-        MessageBoxW(IntPtr.Zero, text, caption, type);
+    private async void RunInstall()
+    {
+        var dir = _path.Text.Trim();
+        if (string.IsNullOrWhiteSpace(dir)) return;
+        if (Directory.Exists(Path.Combine(dir, "BaiAcha.exe")))
+        {
+            var overwrite = MessageBox.Show(this,
+                "该目录已存在 BaiAcha 安装，是否覆盖安装？", "BaiAcha",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (overwrite != DialogResult.Yes) return;
+        }
+
+        _install.Enabled = false;
+        _cancel.Enabled = false;
+        _progress.Style = ProgressBarStyle.Marquee;
+        _status.Text = "正在安装…";
+        var options = new Program.InstallOptions(_autostart.Checked, _shortcut.Checked,
+            _launch.Checked, _removeLegacy.Checked);
+        var code = await Task.Run(() => Program.Install(dir, options));
+        _progress.Style = ProgressBarStyle.Continuous;
+        _progress.Value = 100;
+        if (code == 0)
+        {
+            _status.Text = "安装完成";
+            MessageBox.Show(this, $"BaiAcha {Program.InstalledVersion} 已安装到：\n{dir}",
+                "BaiAcha", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Close();
+        }
+        else
+        {
+            _status.Text = "安装失败，详见错误提示";
+            _cancel.Enabled = true;
+        }
+    }
 }

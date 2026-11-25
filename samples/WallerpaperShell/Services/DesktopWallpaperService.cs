@@ -36,7 +36,7 @@ public static class DesktopWallpaperService
 
     private static string SavedOriginalPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Wallerpaper", "desktop-original.txt");
+        "BaiAcha", "desktop-original.txt");
 
     /// <summary>Path of the wallpaper Windows is currently displaying.</summary>
     public static string? CurrentPath

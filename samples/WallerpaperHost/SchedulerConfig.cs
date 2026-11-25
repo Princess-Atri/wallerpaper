@@ -92,7 +92,7 @@ internal sealed class SchedulerConfig
             {
                 "Taskmgr.exe", "SystemSettings.exe", "ApplicationFrameHost.exe",
                 "ShellExperienceHost.exe", "SearchHost.exe", "StartMenuExperienceHost.exe",
-                "LockApp.exe", "WallerpaperHost.exe", "SceneWallpaperHost.exe"
+                "LockApp.exe", "BaiAchaHost.exe", "BaiAchaSceneHost.exe", "BaiAchaVideoHost.exe", "BaiAchaWebHost.exe", "WallerpaperHost.exe", "SceneWallpaperHost.exe"
             });
         }
         // Screenshot/recorder/screen-capture overlays cover the whole monitor

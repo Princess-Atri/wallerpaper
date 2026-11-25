@@ -39,27 +39,27 @@ public sealed class ShellConfig
         cfg.Cache.Directory = AppStorage.CacheRoot;
         cfg.Library.Add(new LibraryRoot
         {
-            Path = Path.Combine(home, "Videos", "Wallerpaper"),
+            Path = Path.Combine(home, "Videos", "BaiAcha"),
             Kind = WallpaperKind.Video,
             Recursive = true
         });
         cfg.Library.Add(new LibraryRoot
         {
-            Path = Path.Combine(docs, "Wallerpaper", "Web"),
+            Path = Path.Combine(docs, "BaiAcha", "Web"),
             Kind = WallpaperKind.Web,
             Recursive = true
         });
         cfg.Library.Add(new LibraryRoot
         {
-            Path = Path.Combine(docs, "Wallerpaper", "Scenes"),
+            Path = Path.Combine(docs, "BaiAcha", "Scenes"),
             Kind = WallpaperKind.Scene,
             Recursive = true
         });
-        cfg.Host.HostExe = Path.Combine(AppContext.BaseDirectory, "WallerpaperHost.exe");
-        cfg.Host.SchedulerConfig = Path.Combine(local, "Wallerpaper", "scheduler.json");
-        cfg.Host.ChildExe = Path.Combine(AppContext.BaseDirectory, "SceneWallpaperHost.exe");
-        cfg.Host.VideoChildExe = Path.Combine(AppContext.BaseDirectory, "VideoWallpaperHost.exe");
-        cfg.Host.WebChildExe = Path.Combine(AppContext.BaseDirectory, "WebWallpaperHost.exe");
+        cfg.Host.HostExe = Path.Combine(AppContext.BaseDirectory, "BaiAchaHost.exe");
+        cfg.Host.SchedulerConfig = Path.Combine(local, "BaiAcha", "scheduler.json");
+        cfg.Host.ChildExe = Path.Combine(AppContext.BaseDirectory, "BaiAchaSceneHost.exe");
+        cfg.Host.VideoChildExe = Path.Combine(AppContext.BaseDirectory, "BaiAchaVideoHost.exe");
+        cfg.Host.WebChildExe = Path.Combine(AppContext.BaseDirectory, "BaiAchaWebHost.exe");
         return cfg;
     }
 
@@ -84,12 +84,12 @@ public sealed class ShellConfig
         if (string.IsNullOrWhiteSpace(Cache.Directory))
             Cache.Directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "cache");
+                "BaiAcha", "cache");
         Cache.Directory = Environment.ExpandEnvironmentVariables(Cache.Directory);
         if (Cache.Directory.StartsWith(
                 Path.Combine(Environment.GetFolderPath(
                     Environment.SpecialFolder.LocalApplicationData),
-                    "Wallerpaper", "cache"),
+                    "BaiAcha", "cache"),
                 StringComparison.OrdinalIgnoreCase))
             Cache.Directory = AppStorage.CacheRoot;
         Cache.ThumbnailWidth = Math.Clamp(Cache.ThumbnailWidth, 160, 1280);
@@ -112,14 +112,14 @@ public sealed class ShellConfig
         // paths left in an old shell-config.json.
         var baseDir = AppContext.BaseDirectory;
         string Beside(string name) => Path.Combine(baseDir, name);
-        if (File.Exists(Beside("WallerpaperHost.exe"))) Host.HostExe = Beside("WallerpaperHost.exe");
-        if (File.Exists(Beside("SceneWallpaperHost.exe"))) Host.ChildExe = Beside("SceneWallpaperHost.exe");
-        if (File.Exists(Beside("VideoWallpaperHost.exe"))) Host.VideoChildExe = Beside("VideoWallpaperHost.exe");
-        if (File.Exists(Beside("WebWallpaperHost.exe"))) Host.WebChildExe = Beside("WebWallpaperHost.exe");
+        if (File.Exists(Beside("BaiAchaHost.exe"))) Host.HostExe = Beside("BaiAchaHost.exe");
+        if (File.Exists(Beside("BaiAchaSceneHost.exe"))) Host.ChildExe = Beside("BaiAchaSceneHost.exe");
+        if (File.Exists(Beside("BaiAchaVideoHost.exe"))) Host.VideoChildExe = Beside("BaiAchaVideoHost.exe");
+        if (File.Exists(Beside("BaiAchaWebHost.exe"))) Host.WebChildExe = Beside("BaiAchaWebHost.exe");
         if (string.IsNullOrWhiteSpace(Host.SchedulerConfig))
             Host.SchedulerConfig = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "scheduler.json");
+                "BaiAcha", "scheduler.json");
 
         foreach (var root in Library)
             root.Path = Environment.ExpandEnvironmentVariables(root.Path ?? "");
@@ -321,13 +321,35 @@ public static class ConfigStore
 
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Wallerpaper", "shell-config.json");
+        "BaiAcha", "shell-config.json");
+
+    /// <summary>One-time copy of the pre-1.0 config from %LOCALAPPDATA%\Wallerpaper.</summary>
+    private static void MigrateLegacyData()
+    {
+        try
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var oldDir = Path.Combine(local, "Wallerpaper");
+            var newDir = Path.Combine(local, "BaiAcha");
+            if (!Directory.Exists(oldDir)) return;
+            Directory.CreateDirectory(newDir);
+            foreach (var name in new[] { "shell-config.json", "scheduler.json" })
+            {
+                var from = Path.Combine(oldDir, name);
+                var to = Path.Combine(newDir, name);
+                if (File.Exists(from) && !File.Exists(to))
+                    File.Copy(from, to);
+            }
+        }
+        catch { }
+    }
 
     public static ShellConfig Load(string? path = null)
     {
         path ??= DefaultPath;
         try
         {
+            MigrateLegacyData();
             if (!File.Exists(path))
                 return ShellConfig.CreateDefault();
 
