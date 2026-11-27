@@ -81,6 +81,8 @@ public sealed partial class MainWindow : Window
 	private bool? _sceneTemplateApplied;
 	private bool _applyingFilter;
 	private double _savedBrowseOffset;
+	private double _pendingRestoreOffset = -1;
+	private int _pendingRestoreAttempts;
 	private string _savedBrowseSignature = "";
 
 	private List<MonitorDisplay> _monitors = new List<MonitorDisplay>();
@@ -143,6 +145,7 @@ public sealed partial class MainWindow : Window
 		// Default add/delete/reposition transitions re-animate every card when
 		// one is removed, which reads as layout jitter; keep removals instant.
 		WallpaperGrid.ItemContainerTransitions = new TransitionCollection();
+		WallpaperGrid.LayoutUpdated += (_, _) => ApplyPendingScrollRestore();
 		SetupNavHoverEffects();
 		_config = ConfigStore.Load();
 		DesktopWallpaperService.Capture();
@@ -715,16 +718,34 @@ public sealed partial class MainWindow : Window
 			scroll?.ChangeView(null, targetOffset, null, true);
 			if (restore)
 			{
-				// Layout after the swap, then place the viewport back without
-				// any scroll animation.
-				DispatcherQueue.TryEnqueue(() =>
-				{
-					var after = FindScrollViewer(WallpaperGrid);
-					after?.ChangeView(null,
-						Math.Min(targetOffset, after.ScrollableHeight), null, true);
-				});
+				// The collection was just rebuilt; the viewport only accepts the
+				// offset after layout ran, so retry on the next layout passes.
+				_pendingRestoreOffset = targetOffset;
+				_pendingRestoreAttempts = 0;
+				AppLog.Info($"search cleared: restoring offset {targetOffset:0}");
 			}
 		}
+	}
+
+	private void ApplyPendingScrollRestore()
+	{
+		if (_pendingRestoreOffset < 0)
+			return;
+		if (_pendingRestoreAttempts++ > 60)
+		{
+			_pendingRestoreOffset = -1;
+			return;
+		}
+		var scroll = FindScrollViewer(WallpaperGrid);
+		if (scroll is null || scroll.ScrollableHeight < 1)
+			return;
+		double target = Math.Min(_pendingRestoreOffset, scroll.ScrollableHeight);
+		if (Math.Abs(scroll.VerticalOffset - target) < 1.0)
+		{
+			_pendingRestoreOffset = -1;
+			return;
+		}
+		scroll.ChangeView(null, target, null, true);
 	}
 
 	private void ApplyFilter()
