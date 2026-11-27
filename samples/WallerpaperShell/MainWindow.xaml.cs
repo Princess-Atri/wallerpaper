@@ -80,6 +80,8 @@ public sealed partial class MainWindow : Window
 	private string _lastFilterSignature = "";
 	private bool? _sceneTemplateApplied;
 	private bool _applyingFilter;
+	private double _savedBrowseOffset;
+	private string _savedBrowseSignature = "";
 
 	private List<MonitorDisplay> _monitors = new List<MonitorDisplay>();
 
@@ -657,9 +659,19 @@ public sealed partial class MainWindow : Window
 	/// </summary>
 	private void SyncVisibleItems(string signature)
 	{
-		bool contextChanged = !string.Equals(signature, _lastFilterSignature,
+		string previousSignature = _lastFilterSignature;
+		bool contextChanged = !string.Equals(signature, previousSignature,
 			StringComparison.Ordinal);
 		_lastFilterSignature = signature;
+		bool wasSearch = previousSignature.StartsWith("q:", StringComparison.Ordinal);
+		bool isSearch = signature.StartsWith("q:", StringComparison.Ordinal);
+		if (!wasSearch && isSearch)
+		{
+			// Remember where the user was browsing before the search, so
+			// clearing the search returns to that card instead of the top.
+			_savedBrowseOffset = FindScrollViewer(WallpaperGrid)?.VerticalOffset ?? 0;
+			_savedBrowseSignature = previousSignature;
+		}
 
 		for (int i = _visibleItems.Count - 1; i >= 0; i--)
 		{
@@ -695,7 +707,23 @@ public sealed partial class MainWindow : Window
 		if (contextChanged)
 		{
 			var scroll = FindScrollViewer(WallpaperGrid);
-			scroll?.ChangeView(null, 0, null, true);
+			double targetOffset = 0;
+			bool restore = wasSearch && !isSearch &&
+				string.Equals(signature, _savedBrowseSignature, StringComparison.Ordinal);
+			if (restore)
+				targetOffset = _savedBrowseOffset;
+			scroll?.ChangeView(null, targetOffset, null, true);
+			if (restore)
+			{
+				// Layout after the swap, then place the viewport back without
+				// any scroll animation.
+				DispatcherQueue.TryEnqueue(() =>
+				{
+					var after = FindScrollViewer(WallpaperGrid);
+					after?.ChangeView(null,
+						Math.Min(targetOffset, after.ScrollableHeight), null, true);
+				});
+			}
 		}
 	}
 
