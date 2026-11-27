@@ -23,8 +23,7 @@ public static class PlaybackHistoryService
     private const int MaxEntries = 80;
 
     private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Wallerpaper", "playback-history.json");
+        AppStorage.ConfigRoot, "playback-history.json");
 
     public static void Record(WallpaperItem item)
     {
