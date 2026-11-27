@@ -71,21 +71,16 @@ public sealed class VideoCropService
             $"y='ih*{t.ToString("0.####", CultureInfo.InvariantCulture)}'";
         try
         {
+            // Single pass for the same reason as CropAsync: the intermediate
+            // VP9 encode doubled the work and the preview is only 720p-ish.
             if (!await Run(ffmpegFrames, new[]
                 {
                     "-y", "-hide_banner", "-loglevel", "error",
                     "-i", inputPath, "-vf", filter,
-                    "-c:v", "libvpx-vp9", "-b:v", "4M", "-an", intermediate
+                    "-c:v", "h264_mf", "-b:v", "3M", "-pix_fmt", "yuv420p",
+                    "-an", "-movflags", "+faststart", output
                 }, cancellationToken))
                 throw new InvalidOperationException("预览裁剪视频生成失败。");
-            if (!await Run(ffmpegEncode, new[]
-                {
-                    "-y", "-hide_banner", "-loglevel", "error",
-                    "-i", intermediate,
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
-                    "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", output
-                }, cancellationToken))
-                throw new InvalidOperationException("预览视频编码失败。");
             return output;
         }
         finally
@@ -138,13 +133,34 @@ public sealed class VideoCropService
 
         try
         {
-            progress?.Invoke(15, "裁剪画面并写入无损中间层…");
+            // One pass: crop filter + MediaFoundation H.264 in the same build.
+            // The old route wrote a VP9-lossless intermediate first, which took
+            // tens of minutes for a 10 s clip with no visible gain.
+            progress?.Invoke(15, "裁剪画面（硬件编码）…");
+            var single = await Run(ffmpegFrames, new[]
+            {
+                "-y", "-hide_banner", "-loglevel", "error",
+                "-i", inputPath,
+                "-vf", filter,
+                "-map", "0:v:0", "-map", "0:a:0?",
+                "-c:v", "h264_mf", "-b:v", "12M", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                output
+            }, cancellationToken);
+            if (single && File.Exists(output) && new FileInfo(output).Length > 1024)
+            {
+                progress?.Invoke(100, "画面裁剪完成");
+                return new VideoCropResult(output, started.Elapsed);
+            }
+
+            progress?.Invoke(40, "硬件编码不可用，回退到软件编码…");
             var cropOk = await Run(ffmpegFrames, new[]
             {
                 "-y", "-hide_banner", "-loglevel", "error",
                 "-i", inputPath,
                 "-vf", filter,
-                "-c:v", "libvpx-vp9", "-lossless", "1", "-pix_fmt", "yuv444p", "-an",
+                "-c:v", "libvpx-vp9", "-crf", "20", "-b:v", "0", "-pix_fmt", "yuv420p", "-an",
                 intermediate
             }, cancellationToken);
             if (!cropOk || !File.Exists(intermediate))
@@ -158,8 +174,8 @@ public sealed class VideoCropService
                 "-i", inputPath,
                 "-map", "0:v:0",
                 "-map", "1:a:0?",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "14", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-shortest",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+                "-c:a", "copy", "-shortest",
                 "-movflags", "+faststart",
                 output
             }, cancellationToken);

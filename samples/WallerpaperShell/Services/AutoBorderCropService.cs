@@ -77,8 +77,7 @@ public sealed class AutoBorderCropService
                     "-y", "-hide_banner", "-loglevel", "error",
                     "-i", inputPath,
                     "-vf", $"rotate={radians}:ow=rotw(iw):oh=roth(ih):fillcolor=black",
-                    "-c:v", "libvpx-vp9", "-lossless", "1",
-                    "-row-mt", "1", "-cpu-used", "4", "-an", rotated
+                    "-c:v", "h264_mf", "-b:v", "20M", "-pix_fmt", "yuv420p", "-an", rotated
                 }, cancellationToken);
 
                 var rotatedDir = Path.Combine(work, "rot");
@@ -125,32 +124,25 @@ public sealed class AutoBorderCropService
                 $"{stem}_noborder_{DateTime.Now:yyyyMMdd-HHmmss}.mp4");
             var intermediate = Path.Combine(work, "lossless.mkv");
 
-            progress?.Invoke("正在无损裁剪画面…");
+            progress?.Invoke("正在裁剪画面…");
+            // Single pass: crop + MediaFoundation H.264. The VP9-lossless
+            // intermediate plus a slow x264 pass took minutes per clip and is
+            // not visually better than 16 Mbit high-profile output.
             await Run(ffmpegFrames, new[]
             {
                 "-y", "-hide_banner", "-loglevel", "error",
                 "-i", cropInput,
-                "-vf", $"crop={width}:{height}:{left}:{top}",
-                "-c:v", "libvpx-vp9", "-lossless", "1",
-                "-row-mt", "1", "-cpu-used", "4", "-an", intermediate
-            }, cancellationToken);
-
-            progress?.Invoke("正在生成无损壁纸…");
-            await Run(ffmpegEncode, new[]
-            {
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-i", intermediate,
                 "-i", inputPath,
-                "-map", "0:v:0", "-map", "1:a?",
-                // Lossless x264 uses High 4:4:4 Predictive, which Windows
-                // Media Foundation cannot decode (detail preview turns black).
-                // CRF 12 High profile is visually lossless and compatible.
-                "-c:v", "libx264", "-preset", "slow", "-crf", "12",
-                "-profile:v", "high", "-level", "4.1",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "copy", "-movflags", "+faststart",
+                "-map", "0:v:0", "-map", "1:a:0?",
+                "-vf", $"crop={width}:{height}:{left}:{top}",
+                "-c:v", "h264_mf", "-b:v", "16M", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
                 output
             }, cancellationToken);
+            if (!File.Exists(output) || new FileInfo(output).Length < 1024)
+                throw new InvalidOperationException("自动裁剪编码失败。");
+            File.Delete(intermediate);
 
             progress?.Invoke("完成");
             return new AutoBorderCropResult(output, left, top, width, height,
