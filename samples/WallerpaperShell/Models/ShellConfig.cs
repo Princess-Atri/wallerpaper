@@ -381,6 +381,27 @@ public static class ConfigStore
 
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(config, JsonOptions));
+        // Keep a short history next to the live file: a bad Normalize/save round
+        // once rewrote the library without warning, and without a copy the lost
+        // items were unrecoverable.
+        try
+        {
+            if (File.Exists(path))
+            {
+                var dir = Path.GetDirectoryName(path)!;
+                var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                var backup = Path.Combine(dir, $"shell-config.bak-{stamp}.json");
+                if (!File.Exists(backup))
+                    File.Copy(path, backup);
+                foreach (var old in Directory.EnumerateFiles(dir, "shell-config.bak-*.json")
+                             .OrderByDescending(x => x)
+                             .Skip(5))
+                {
+                    try { File.Delete(old); } catch { }
+                }
+            }
+        }
+        catch { }
         File.Move(tmp, path, overwrite: true);
     }
 }

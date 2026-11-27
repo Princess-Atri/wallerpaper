@@ -364,11 +364,20 @@ public sealed partial class MainWindow : Window
 				Content = new FontIcon { FontSize = 16 }
 			};
 			ToolTipService.SetToolTip(button, "收藏");
-			button.Click += (_, _) => ToggleFavorite(item);
+			button.Click += OnFavoriteButtonClick;
 			root.Children.Add(button);
 		}
 		button.Tag = item;
 		UpdateFavoriteButton(button, item);
+	}
+
+	private void OnFavoriteButtonClick(object sender, RoutedEventArgs e)
+	{
+		// Read the item from Tag: GridView recycles containers, so a closure
+		// captured at creation time would toggle a stale item (which is why
+		// favouriting appeared to do nothing after scrolling).
+		if (sender is Button { Tag: WallpaperItem item })
+			ToggleFavorite(item);
 	}
 
 	private void UpdateFavoriteButton(Button button, WallpaperItem item)
