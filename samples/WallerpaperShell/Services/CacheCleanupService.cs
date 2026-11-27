@@ -41,6 +41,10 @@ public static class CacheCleanupService
         long freed = 0;
         var kept = 0;
 
+        // Snapshot the config before touching any file, so a wrong "orphan"
+        // decision can always be rolled back.
+        BackupConfig(config);
+
         if (Directory.Exists(cacheRoot))
         {
             var protectedPaths = CollectProtected(config);
@@ -63,8 +67,10 @@ public static class CacheCleanupService
                 }
             }
 
-            // Orphan pruning ignores age: a file no item references is wasted
-            // space no matter how recently it was written.
+            // Orphan pruning is age gated too: a cache file can look unreferenced
+    // simply because the config was written before it was added, or because
+    // two configs were in use during a rename/migration. Deleting it
+    // immediately used to wipe library items that lived in the cache.
             foreach (var folderName in PersistentFolders)
             {
                 var folder = Path.Combine(cacheRoot, folderName);
@@ -72,7 +78,9 @@ public static class CacheCleanupService
                 foreach (var file in SafeEnumerate(folder))
                 {
                     if (IsProtected(file, protectedPaths)) { kept++; continue; }
-                    TryDelete(new FileInfo(file), ref deleted, ref freed);
+                    var info = new FileInfo(file);
+                    if (info.LastWriteTimeUtc > cutoff) continue;
+                    TryDelete(info, ref deleted, ref freed);
                 }
             }
 
@@ -238,8 +246,15 @@ public static class CacheCleanupService
         }
         foreach (var root in config.Library)
         {
-            if (!string.IsNullOrWhiteSpace(root.Path) && File.Exists(root.Path))
+            if (string.IsNullOrWhiteSpace(root.Path)) continue;
+            if (File.Exists(root.Path))
                 Add(root.Path);
+            else if (Directory.Exists(root.Path))
+                // Trailing separator marks a whole subtree as protected: every
+                // media file a user keeps in a configured library folder is part
+                // of the library, not a disposable derivative.
+                Add(root.Path.TrimEnd(Path.DirectorySeparatorChar) +
+                    Path.DirectorySeparatorChar);
         }
         try
         {
@@ -254,11 +269,52 @@ public static class CacheCleanupService
         return set;
     }
 
+    /// <summary>Keeps the five newest shell-config snapshots next to the live
+    /// config file. Cleaning without a backup once cost the user library items,
+    /// so every run now leaves a rollback point.</summary>
+    private static void BackupConfig(ShellConfig config)
+    {
+        try
+        {
+            var path = config.ConfigPath;
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return;
+            var dir = Path.GetDirectoryName(path)!;
+            var target = Path.Combine(dir,
+                $"shell-config.bak-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            if (!File.Exists(target))
+                File.Copy(path, target);
+            foreach (var old in Directory.EnumerateFiles(dir, "shell-config.bak-*.json")
+                         .OrderByDescending(x => x)
+                         .Skip(5))
+            {
+                try { File.Delete(old); } catch { }
+            }
+        }
+        catch
+        {
+            // A backup failure must never block the cleanup itself.
+        }
+    }
+
     private static bool IsProtected(string file, HashSet<string> protectedPaths)
     {
         try
         {
-            return protectedPaths.Contains(Path.GetFullPath(file));
+            var full = Path.GetFullPath(file);
+            if (protectedPaths.Contains(full))
+                return true;
+            // Entries ending with a separator protect a whole library subtree:
+            // files a user put into the cache on purpose (crop / superres
+            // output that lives in the library folder) must never be cleaned
+            // just because the config did not reference them yet.
+            foreach (var entry in protectedPaths)
+            {
+                if (entry.Length > 3 && entry.EndsWith(Path.DirectorySeparatorChar) &&
+                    full.StartsWith(entry, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
         catch
         {
