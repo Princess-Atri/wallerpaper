@@ -79,6 +79,7 @@ public sealed partial class MainWindow : Window
 	private readonly ObservableCollection<WallpaperItem> _visibleItems = new();
 	private string _lastFilterSignature = "";
 	private bool? _sceneTemplateApplied;
+	private bool _applyingFilter;
 
 	private List<MonitorDisplay> _monitors = new List<MonitorDisplay>();
 
@@ -282,7 +283,7 @@ public sealed partial class MainWindow : Window
 		}
 	}
 
-	private async Task RefreshCatalogAsync()
+	private async Task RefreshCatalogAsync(bool refreshThumbnails = true)
 	{
 		int token = ++_refreshToken;
 		var scrollBefore = FindScrollViewer(WallpaperGrid);
@@ -316,6 +317,10 @@ public sealed partial class MainWindow : Window
 		}
 		foreach (WallpaperItem item in _visible.ToList())
 		{
+			// A delete must not touch the remaining cards: decoding thumbnails
+			// again is what made the grid flash and could stall the UI thread.
+			if (!refreshThumbnails)
+				break;
 			// Decode each thumbnail once: re-creating the BitmapImage on every
 			// refresh made deletes flash all visible cards.
 			if (item.Thumbnail is not null)
@@ -695,6 +700,23 @@ public sealed partial class MainWindow : Window
 	}
 
 	private void ApplyFilter()
+	{
+		// Collection changes can bounce back through SelectionChanged and
+		// re-enter here; without this guard the sync loop could spin forever.
+		if (_applyingFilter)
+			return;
+		_applyingFilter = true;
+		try
+		{
+			ApplyFilterCore();
+		}
+		finally
+		{
+			_applyingFilter = false;
+		}
+	}
+
+	private void ApplyFilterCore()
 	{
 		string query = SearchBox.Text?.Trim() ?? "";
 		bool flag = !string.IsNullOrWhiteSpace(query);
@@ -1416,7 +1438,9 @@ public sealed partial class MainWindow : Window
 				ClearSelection();
 			}
 			ConfigStore.Save(_config);
-			await RefreshCatalogAsync();
+			AppLog.Info($"delete: refreshing catalog after {items.Count} removals");
+			await RefreshCatalogAsync(refreshThumbnails: false);
+			AppLog.Info("delete: catalog refreshed");
 			if (!wasPlaying)
 			{
 				// Nothing currently visible used these items.
