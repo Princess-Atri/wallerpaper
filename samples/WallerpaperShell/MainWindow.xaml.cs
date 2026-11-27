@@ -587,6 +587,44 @@ public sealed partial class MainWindow : Window
 		ApplyFilter();
 	}
 
+	/// <summary>
+	/// Splits the visible wallpapers into one section per pinyin initial, like
+	/// the Start menu's app list: "#" first for titles without a latin initial,
+	/// then A–Z. Chinese titles use their pinyin initial, so 白子 lands in "B".
+	/// </summary>
+	private static List<WallpaperGroup> GroupByInitial(List<WallpaperItem> items)
+	{
+		var groups = new Dictionary<string, WallpaperGroup>(StringComparer.OrdinalIgnoreCase);
+		foreach (var item in items)
+		{
+			var key = InitialOf(item.Title);
+			if (!groups.TryGetValue(key, out var group))
+			{
+				group = new WallpaperGroup(key);
+				groups[key] = group;
+			}
+			group.Add(item);
+		}
+		return groups.Values
+			.OrderBy(x => x.Key == "#" ? "" : x.Key, StringComparer.OrdinalIgnoreCase)
+			.ToList();
+	}
+
+	private static string InitialOf(string? title)
+	{
+		if (string.IsNullOrWhiteSpace(title))
+			return "#";
+		var initials = PinyinHelper.ToInitials(title);
+		if (initials.Length > 0)
+		{
+			var ch = char.ToUpperInvariant(initials[0]);
+			if (ch >= 'A' && ch <= 'Z')
+				return ch.ToString();
+		}
+		var first = char.ToUpperInvariant(title[0]);
+		return first >= 'A' && first <= 'Z' ? first.ToString() : "#";
+	}
+
 	private void ApplyFilter()
 	{
 		string query = SearchBox.Text?.Trim() ?? "";
@@ -3491,6 +3529,14 @@ public sealed partial class MainWindow : Window
 				WallpaperItem wallpaperItem = _catalog.Items.FirstOrDefault((WallpaperItem x) => string.Equals(x.Path, result.OutputPath, StringComparison.OrdinalIgnoreCase));
 				if (wallpaperItem != null)
 				{
+					// Inherit the source item's (possibly renamed) title: the crop
+					// file is named after the source FILE, so without this the card
+					// fell back to the original filename the user had renamed away.
+					wallpaperItem.Title = string.IsNullOrWhiteSpace(item.Title)
+						? wallpaperItem.Title
+						: item.Title + " 裁剪";
+					TitleOverrideStore.Set(wallpaperItem.Path, wallpaperItem.Title,
+						wallpaperItem.Kind);
 					wallpaperItem.Fit = "cover";
 					ConfigStore.Save(_config);
 				}
@@ -3720,6 +3766,15 @@ public sealed partial class MainWindow : Window
 				AddLibraryRoot(queueRenderResult.OutputPath, WallpaperKind.Video, recursive: false);
 				ConfigStore.Save(_config);
 				await RefreshCatalogAsync();
+				var trimmed = _catalog.Items.FirstOrDefault(x =>
+					string.Equals(x.Path, queueRenderResult.OutputPath, StringComparison.OrdinalIgnoreCase));
+				if (trimmed is not null && !string.IsNullOrWhiteSpace(item.Title))
+				{
+					// Keep the user's own name instead of reverting to the filename.
+					trimmed.Title = item.Title + " 裁剪";
+					TitleOverrideStore.Set(trimmed.Path, trimmed.Title, trimmed.Kind);
+					ConfigStore.Save(_config);
+				}
 				ApplyFilter();
 				RevealWallpaper(queueRenderResult.OutputPath);
 				SetStatus("视频裁剪完成，已加入视频库");
