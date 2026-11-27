@@ -73,6 +73,10 @@ public sealed partial class MainWindow : Window
 	private volatile int _frameSyncToken;
 
 	private List<WallpaperItem> _visible = new List<WallpaperItem>();
+	/// <summary>Bound to the grid once; updated in place so deleting one card
+	/// never rebuilds the ItemsSource and never snaps the scroll back to the top.</summary>
+	private readonly ObservableCollection<WallpaperItem> _visibleItems = new();
+	private string _lastFilterSignature = "";
 
 	private List<MonitorDisplay> _monitors = new List<MonitorDisplay>();
 
@@ -130,6 +134,7 @@ public sealed partial class MainWindow : Window
 			e.Handled = true;
 		};
 		WallpaperGrid.ContainerContentChanging += WallpaperGrid_ContainerContentChanging;
+		WallpaperGrid.ItemsSource = _visibleItems;
 		SetupNavHoverEffects();
 		_config = ConfigStore.Load();
 		DesktopWallpaperService.Capture();
@@ -625,6 +630,56 @@ public sealed partial class MainWindow : Window
 		return first >= 'A' && first <= 'Z' ? first.ToString() : "#";
 	}
 
+	/// <summary>
+	/// Mirrors <see cref="_visible"/> into the bound ObservableCollection with a
+	/// minimal diff. Replacing ItemsSource made the GridView reset to the top
+	/// and then scroll back to the previous spot, which looked like the list
+	/// travelling from the first card to the one you were on.
+	/// </summary>
+	private void SyncVisibleItems(string signature)
+	{
+		bool contextChanged = !string.Equals(signature, _lastFilterSignature,
+			StringComparison.Ordinal);
+		_lastFilterSignature = signature;
+
+		for (int i = _visibleItems.Count - 1; i >= 0; i--)
+		{
+			if (!_visible.Contains(_visibleItems[i]))
+				_visibleItems.RemoveAt(i);
+		}
+		for (int i = 0; i < _visible.Count; i++)
+		{
+			if (i >= _visibleItems.Count)
+			{
+				_visibleItems.Add(_visible[i]);
+			}
+			else if (!ReferenceEquals(_visibleItems[i], _visible[i]))
+			{
+				int existing = -1;
+				for (int j = i + 1; j < _visibleItems.Count; j++)
+				{
+					if (ReferenceEquals(_visibleItems[j], _visible[i]))
+					{
+						existing = j;
+						break;
+					}
+				}
+				if (existing >= 0)
+					_visibleItems.Move(existing, i);
+				else
+					_visibleItems.Insert(i, _visible[i]);
+			}
+		}
+		while (_visibleItems.Count > _visible.Count)
+			_visibleItems.RemoveAt(_visibleItems.Count - 1);
+
+		if (contextChanged)
+		{
+			var scroll = FindScrollViewer(WallpaperGrid);
+			scroll?.ChangeView(null, 0, null, true);
+		}
+	}
+
 	private void ApplyFilter()
 	{
 		string query = SearchBox.Text?.Trim() ?? "";
@@ -642,7 +697,7 @@ public sealed partial class MainWindow : Window
 		if (_favoritesOnly)
 			_visible = _visible.Where(x => x.IsFavorite).ToList();
 		FavoriteFilterCombo.Visibility = Visibility.Collapsed;
-		WallpaperGrid.ItemsSource = _visible;
+		SyncVisibleItems(flag ? "q:" + query : "k:" + _kind);
 		EmptyState.Visibility = ((_visible.Count != 0) ? Visibility.Collapsed : Visibility.Visible);
 		VideoToWebButton.Visibility = ((_kind != WallpaperKind.Web) ? Visibility.Collapsed : Visibility.Visible);
 		CreateWebButton.Visibility = _kind == WallpaperKind.Web ? Visibility.Visible : Visibility.Collapsed;
