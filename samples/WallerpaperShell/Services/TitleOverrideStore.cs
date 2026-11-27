@@ -15,7 +15,24 @@ public static class TitleOverrideStore
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Wallerpaper", "title-overrides.json");
+        "BaiAcha", "title-overrides.json");
+
+    /// <summary>Copies the pre-1.0 store from %LOCALAPPDATA%\Wallerpaper once,
+    /// so custom names survive the rename.</summary>
+    private static void MigrateLegacy()
+    {
+        try
+        {
+            if (File.Exists(FilePath)) return;
+            var legacy = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Wallerpaper", "title-overrides.json");
+            if (!File.Exists(legacy)) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            File.Copy(legacy, FilePath);
+        }
+        catch { }
+    }
 
     public static void Apply(IEnumerable<WallpaperItem> items)
     {
@@ -67,6 +84,7 @@ public static class TitleOverrideStore
         lock (Gate)
         {
             if (_titles is not null) return _titles;
+            MigrateLegacy();
             try
             {
                 if (File.Exists(FilePath))

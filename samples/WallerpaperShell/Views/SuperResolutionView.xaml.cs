@@ -160,16 +160,28 @@ public sealed partial class SuperResolutionView : UserControl
                 outputPath = result.OutputPath;
             }
 
+            var finalPath = outputPath;
+            if (targetDir is null)
+            {
+                finalPath = AppStorage.ExportBesideSource(outputPath,
+                    _selectedPath, $"_SR{factor}x");
+            }
+            // Keep the user's name: the file itself always carries the source
+            // file name, so register the title override for the new path.
+            var sourceTitle = _catalog.Items.FirstOrDefault(x =>
+                string.Equals(x.Path, _selectedPath, StringComparison.OrdinalIgnoreCase))?.Title;
+            if (string.IsNullOrWhiteSpace(sourceTitle))
+                sourceTitle = Path.GetFileNameWithoutExtension(_selectedPath);
+            TitleOverrideStore.Set(finalPath, sourceTitle + " 超分");
+
             LibraryChanged?.Invoke(this, EventArgs.Empty);
             if (targetDir is not null)
             {
-                StatusText.Text = "完成，已输出到：" + outputPath;
+                StatusText.Text = "完成，已输出到：" + finalPath;
             }
             else
             {
-                var exported = AppStorage.ExportBesideSource(outputPath,
-                    _selectedPath, $"_SR{factor}x");
-                StatusText.Text = "完成，已输出到原视频目录：" + exported;
+                StatusText.Text = "完成，已输出到原视频目录：" + finalPath;
             }
         }
         catch (OperationCanceledException)

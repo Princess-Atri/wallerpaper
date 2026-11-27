@@ -129,16 +129,29 @@ public sealed partial class AiInterpolationView : UserControl
                     StatusText.Text = message;
                 }), _cts.Token, targetDir);
 
+            var finalPath = result.OutputPath;
+            if (targetDir is null)
+            {
+                finalPath = AppStorage.ExportBesideSource(result.OutputPath,
+                    _selectedPath, $"_AI{factor}x");
+            }
+            // The output file is named after the source FILE; without a title
+            // override the card would fall back to the original file name and
+            // lose the custom name the user gave the source wallpaper.
+            var sourceTitle = _catalog.Items.FirstOrDefault(x =>
+                string.Equals(x.Path, _selectedPath, StringComparison.OrdinalIgnoreCase))?.Title;
+            if (string.IsNullOrWhiteSpace(sourceTitle))
+                sourceTitle = Path.GetFileNameWithoutExtension(_selectedPath);
+            TitleOverrideStore.Set(finalPath, sourceTitle + " 补帧");
+
             LibraryChanged?.Invoke(this, EventArgs.Empty);
             if (targetDir is not null)
             {
-                StatusText.Text = "完成，已输出到：" + result.OutputPath;
+                StatusText.Text = "完成，已输出到：" + finalPath;
             }
             else
             {
-                var exported = AppStorage.ExportBesideSource(result.OutputPath,
-                    _selectedPath, $"_AI{factor}x");
-                StatusText.Text = "完成，已输出到原视频目录：" + exported;
+                StatusText.Text = "完成，已输出到原视频目录：" + finalPath;
             }
         }
         catch (OperationCanceledException)
