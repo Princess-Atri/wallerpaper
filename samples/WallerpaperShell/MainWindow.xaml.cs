@@ -21,6 +21,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Wallerpaper.Diagnostics;
 using Wallerpaper.Shell.Models;
@@ -77,6 +78,7 @@ public sealed partial class MainWindow : Window
 	/// never rebuilds the ItemsSource and never snaps the scroll back to the top.</summary>
 	private readonly ObservableCollection<WallpaperItem> _visibleItems = new();
 	private string _lastFilterSignature = "";
+	private bool? _sceneTemplateApplied;
 
 	private List<MonitorDisplay> _monitors = new List<MonitorDisplay>();
 
@@ -135,6 +137,9 @@ public sealed partial class MainWindow : Window
 		};
 		WallpaperGrid.ContainerContentChanging += WallpaperGrid_ContainerContentChanging;
 		WallpaperGrid.ItemsSource = _visibleItems;
+		// Default add/delete/reposition transitions re-animate every card when
+		// one is removed, which reads as layout jitter; keep removals instant.
+		WallpaperGrid.ItemContainerTransitions = new TransitionCollection();
 		SetupNavHoverEffects();
 		_config = ConfigStore.Load();
 		DesktopWallpaperService.Capture();
@@ -311,12 +316,21 @@ public sealed partial class MainWindow : Window
 		}
 		foreach (WallpaperItem item in _visible.ToList())
 		{
+			// Decode each thumbnail once: re-creating the BitmapImage on every
+			// refresh made deletes flash all visible cards.
+			if (item.Thumbnail is not null)
+				continue;
 			string text = await _thumbnails.GetAsync(item);
 			if (token == _refreshToken && text != null)
 			{
 				try
 				{
-					item.Thumbnail = new BitmapImage(new Uri(text));
+					item.Thumbnail = new BitmapImage
+					{
+						DecodePixelType = DecodePixelType.Logical,
+						DecodePixelWidth = 280,
+						UriSource = new Uri(text)
+					};
 				}
 				catch
 				{
@@ -706,20 +720,27 @@ public sealed partial class MainWindow : Window
 		ConvertToMp4Button.Visibility = ((_kind != WallpaperKind.Video && _kind != WallpaperKind.Sequence)
 			? Visibility.Collapsed : Visibility.Visible);
 		BatchDeleteButton.IsEnabled = _visible.Count > 0;
-		if (!flag && _kind == WallpaperKind.Scene)
+		// Re-assigning the same templates on every filter rebuilt containers;
+		// only switch when the layout really changes.
+		bool sceneTemplate = !flag && _kind == WallpaperKind.Scene;
+		if (_sceneTemplateApplied != sceneTemplate)
 		{
-			WallpaperGrid.ItemTemplate = (DataTemplate)Root.Resources["SceneCardTemplate"];
-			WallpaperGrid.ItemsPanel = (ItemsPanelTemplate)Root.Resources["SceneGridPanel"];
-		}
-		else
-		{
-			if ((object)_defaultGridTemplate != null)
+			_sceneTemplateApplied = sceneTemplate;
+			if (sceneTemplate)
 			{
-				WallpaperGrid.ItemTemplate = _defaultGridTemplate;
+				WallpaperGrid.ItemTemplate = (DataTemplate)Root.Resources["SceneCardTemplate"];
+				WallpaperGrid.ItemsPanel = (ItemsPanelTemplate)Root.Resources["SceneGridPanel"];
 			}
-			if ((object)_defaultGridPanel != null)
+			else
 			{
-				WallpaperGrid.ItemsPanel = _defaultGridPanel;
+				if ((object)_defaultGridTemplate != null)
+				{
+					WallpaperGrid.ItemTemplate = _defaultGridTemplate;
+				}
+				if ((object)_defaultGridPanel != null)
+				{
+					WallpaperGrid.ItemsPanel = _defaultGridPanel;
+				}
 			}
 		}
 		TextBlock categoryTitle = CategoryTitle;
@@ -886,12 +907,21 @@ public sealed partial class MainWindow : Window
 		int token = _refreshToken;
 		foreach (WallpaperItem item in _visible.ToList())
 		{
+			// Decode each thumbnail once: re-creating the BitmapImage on every
+			// refresh made deletes flash all visible cards.
+			if (item.Thumbnail is not null)
+				continue;
 			string text = await _thumbnails.GetAsync(item);
 			if (token == _refreshToken && text != null)
 			{
 				try
 				{
-					item.Thumbnail = new BitmapImage(new Uri(text));
+					item.Thumbnail = new BitmapImage
+					{
+						DecodePixelType = DecodePixelType.Logical,
+						DecodePixelWidth = 280,
+						UriSource = new Uri(text)
+					};
 				}
 				catch
 				{
