@@ -320,8 +320,7 @@ public static class ConfigStore
     };
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "BaiAcha", "shell-config.json");
+        Wallerpaper.Shell.Services.AppStorage.ConfigRoot, "shell-config.json");
 
     /// <summary>One-time copy of the pre-1.0 config from %LOCALAPPDATA%\Wallerpaper.</summary>
     private static void MigrateLegacyData()

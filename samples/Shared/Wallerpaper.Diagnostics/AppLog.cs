@@ -23,9 +23,13 @@ public static class AppLog
         lock (Gate)
         {
             _app = Sanitize(appName);
-            _directory = directory ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "BaiAcha", "logs");
+            // Portable installs keep logs next to the executables.
+            var portableRoot = Path.Combine(AppContext.BaseDirectory, "UserData");
+            _directory = directory ?? (System.IO.Directory.Exists(portableRoot)
+                ? Path.Combine(portableRoot, "logs")
+                : Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "BaiAcha", "logs"));
 
             try
             {

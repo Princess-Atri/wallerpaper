@@ -14,8 +14,7 @@ public static class TitleOverrideStore
     private static Dictionary<string, string>? _titles;
 
     private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "BaiAcha", "title-overrides.json");
+        AppStorage.ConfigRoot, "title-overrides.json");
 
     /// <summary>Copies the pre-1.0 store from %LOCALAPPDATA%\Wallerpaper once,
     /// so custom names survive the rename.</summary>
@@ -24,9 +23,11 @@ public static class TitleOverrideStore
         try
         {
             if (File.Exists(FilePath)) return;
-            var legacy = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Wallerpaper", "title-overrides.json");
+            var local = Environment.GetFolderPath(
+                Environment.SpecialFolder.LocalApplicationData);
+            var legacy = Path.Combine(local, "BaiAcha", "title-overrides.json");
+            if (!File.Exists(legacy))
+                legacy = Path.Combine(local, "Wallerpaper", "title-overrides.json");
             if (!File.Exists(legacy)) return;
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
             File.Copy(legacy, FilePath);

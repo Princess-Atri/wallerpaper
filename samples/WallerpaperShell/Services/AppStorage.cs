@@ -13,8 +13,26 @@ public static class AppStorage
             var overridePath = Environment.GetEnvironmentVariable("BAIACHA_ROOT") ?? Environment.GetEnvironmentVariable("WALLERPAPER_ROOT");
             if (!string.IsNullOrWhiteSpace(overridePath))
                 return Path.GetFullPath(overridePath);
+            // Portable layout: if the install folder carries a UserData
+            // directory, everything (cache, recycle, config, logs) stays there.
+            var portable = Path.Combine(AppContext.BaseDirectory, "UserData");
+            if (Directory.Exists(portable)) return portable;
             var d = @"D:\Desktop\wallerpaper c";
             return Directory.Exists(d) ? d : @"D:\BaiAcha";
+        }
+    }
+
+    /// <summary>Where shell-config / scheduler / title overrides live.</summary>
+    public static string ConfigRoot
+    {
+        get
+        {
+            var portable = Path.Combine(AppContext.BaseDirectory, "UserData", "config");
+            if (Directory.Exists(Path.Combine(AppContext.BaseDirectory, "UserData")))
+                return portable;
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "BaiAcha");
         }
     }
 
